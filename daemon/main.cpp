@@ -54,6 +54,27 @@ static std::int64_t now_ms() {
         .count();
 }
 
+static std::filesystem::path log_path() {
+    std::error_code ec;
+    return std::filesystem::temp_directory_path(ec) / "ultijarvis.log";
+}
+
+static void jlog(const std::string &msg) {
+    std::ofstream f(log_path(), std::ios::app);
+    if (!f.is_open())
+        return;
+    std::time_t t = std::time(nullptr);
+    char stamp[32] = {0};
+    std::tm tm {};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
+    f << stamp << "  " << msg << "\n";
+}
+
 static std::filesystem::path exe_dir() {
     return std::filesystem::path(
         boost::dll::program_location().parent_path().string());
@@ -65,9 +86,15 @@ extern "C" const OrtApiBase *ORT_API_CALL OrtGetApiBase(void) NO_EXCEPTION {
         HMODULE lib = nullptr;
         std::error_code ec;
         std::filesystem::path local = exe_dir() / "onnxruntime.dll";
-        if (std::filesystem::exists(local, ec))
+        if (std::filesystem::exists(local, ec)) {
             lib = LoadLibraryExW(local.wstring().c_str(), nullptr,
                                  LOAD_WITH_ALTERED_SEARCH_PATH);
+            if (!lib)
+                jlog("LoadLibrary failed for " + local.string() +
+                     " (GetLastError=" + std::to_string(GetLastError()) + ")");
+        } else {
+            jlog("onnxruntime.dll is not next to the daemon: " + local.string());
+        }
 #ifdef JARVIS_ONNXRUNTIME_DLL
         if (!lib) {
             std::filesystem::path configured(JARVIS_ONNXRUNTIME_DLL);
@@ -76,10 +103,14 @@ extern "C" const OrtApiBase *ORT_API_CALL OrtGetApiBase(void) NO_EXCEPTION {
                                      LOAD_WITH_ALTERED_SEARCH_PATH);
         }
 #endif
-        if (!lib)
+        if (!lib) {
+            jlog("onnxruntime could not be loaded at all");
             return nullptr;
+        }
         auto entry = reinterpret_cast<const OrtApiBase *(ORT_API_CALL *)(void)>(
             reinterpret_cast<void *>(GetProcAddress(lib, "OrtGetApiBase")));
+        if (!entry)
+            jlog("onnxruntime.dll has no OrtGetApiBase export");
         return entry ? entry() : nullptr;
     }();
     return api;
@@ -102,27 +133,6 @@ static std::filesystem::path pid_path() {
 static std::filesystem::path lock_path() {
     std::error_code ec;
     return std::filesystem::temp_directory_path(ec) / "ultijarvis.lock";
-}
-
-static std::filesystem::path log_path() {
-    std::error_code ec;
-    return std::filesystem::temp_directory_path(ec) / "ultijarvis.log";
-}
-
-static void jlog(const std::string &msg) {
-    std::ofstream f(log_path(), std::ios::app);
-    if (!f.is_open())
-        return;
-    std::time_t t = std::time(nullptr);
-    char stamp[32] = {0};
-    std::tm tm {};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
-    std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
-    f << stamp << "  " << msg << "\n";
 }
 
 void wakeword_callback(CLFML::LOWWI::Lowwi_ctx_t, std::shared_ptr<void>) {
@@ -308,6 +318,13 @@ int main() {
     std::error_code ec;
     std::filesystem::current_path(exe_dir(), ec);
     jlog("cwd = " + std::filesystem::current_path(ec).string());
+#ifdef _WIN32
+    if (!OrtGetApiBase()) {
+        jlog("onnxruntime is unavailable, the daemon cannot run");
+        return 1;
+    }
+    jlog("onnxruntime ready");
+#endif
     CLFML::LOWWI::Lowwi ww_runtime;
     CLFML::LOWWI::Lowwi_word_t ww;
     ww.cbfunc = wakeword_callback;
