@@ -246,3 +246,127 @@ jobs:
               Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
             }
           }
+
+  macos-cleanroom:
+    needs: macos
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.all_platforms)
+      || startsWith(github.ref, 'refs/tags/')
+    runs-on: macos-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-packages
+          path: pkg
+
+      - name: Extract the package
+        run: |
+          set -e
+          tgz=$(find pkg -name '*.tar.gz' | head -1)
+          test -n "$tgz" || { echo "no tarball in artifact"; exit 1; }
+          mkdir -p app && tar xzf "$tgz" -C app
+          root=$(find app -mindepth 1 -maxdepth 1 -type d | head -1)
+          test -n "$root" || root=app
+          echo "APPROOT=$(cd "$root" && pwd)" >> "$GITHUB_ENV"
+          echo "extracted to $root"
+
+      - name: Find dependencies that live outside the package
+        run: |
+          set -e
+          root="$APPROOT"
+          : > /tmp/external.txt
+          : > /tmp/rpath_missing.txt
+          find "$root" -type f | while IFS= read -r f; do
+            file -b "$f" | grep -q 'Mach-O' || continue
+            otool -L "$f" 2>/dev/null | tail -n +2 | awk '{print $1}' | while read -r dep; do
+              case "$dep" in
+                /usr/lib/*|/System/*) ;;
+                @rpath/*|@loader_path/*|@executable_path/*)
+                  base=$(basename "$dep")
+                  if [ -z "$(find "$root" -name "$base" -print -quit)" ]; then
+                    echo "${f#$root/}  ->  $dep" >> /tmp/rpath_missing.txt
+                  fi
+                  ;;
+                *) echo "${f#$root/}  ->  $dep" >> /tmp/external.txt ;;
+              esac
+            done
+          done
+          fail=0
+          if [ -s /tmp/external.txt ]; then
+            echo "*** links against paths outside the package (will break on another Mac) ***"
+            sort -u /tmp/external.txt
+            fail=1
+          fi
+          if [ -s /tmp/rpath_missing.txt ]; then
+            echo "*** @rpath dependency not present in the package ***"
+            sort -u /tmp/rpath_missing.txt
+            fail=1
+          fi
+          test "$fail" -eq 0 && echo "self-contained: no external or unresolved dependencies"
+          exit $fail
+
+      - name: Launch and check dyld can load everything
+        run: |
+          set -e
+          root="$APPROOT"
+          for name in "Ulti-Jarvis-Settings" "Ulti-Jarvis-Daemon"; do
+            exe="$root/$name"
+            test -x "$exe" || { echo "missing executable: $name"; exit 1; }
+            echo "--- $name ---"
+            out=$("$exe" 2>&1 & pid=$!; sleep 8; kill $pid 2>/dev/null; wait $pid 2>/dev/null; true)
+            echo "$out" | head -20
+            if echo "$out" | grep -qE "Library not loaded|image not found|Symbol not found"; then
+              echo "FAIL: $name could not resolve a library"; exit 1
+            fi
+            echo "$name: no dyld resolution errors"
+          done
+
+  linux-cleanroom:
+    needs: linux
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.all_platforms)
+      || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages
+          path: pkg
+
+      - name: Install the .deb the way a user would
+        run: |
+          set -e
+          deb=$(find pkg -name '*.deb' | head -1)
+          test -n "$deb" || { echo "no .deb in artifact"; exit 1; }
+          echo "installing $deb"
+          sudo apt-get update
+          sudo apt-get install -y "$PWD/$deb"
+
+      - name: Check every installed binary resolves its libraries
+        run: |
+          set -e
+          root=/usr/lib/ultijarvis
+          test -d "$root" || { echo "package did not install to $root"; exit 1; }
+          : > /tmp/missing.txt
+          find "$root" -type f | while IFS= read -r f; do
+            file -b "$f" | grep -q 'ELF' || continue
+            ldd "$f" 2>/dev/null | grep 'not found' | while read -r line; do
+              echo "${f#$root/}  ->  $line" >> /tmp/missing.txt
+            done
+          done
+          if [ -s /tmp/missing.txt ]; then
+            echo "*** unresolved shared libraries after a clean install ***"
+            sort -u /tmp/missing.txt
+            exit 1
+          fi
+          echo "every installed binary resolves all of its libraries"
+
+      - name: Check the Qt SVG plugin is available
+        run: |
+          set -e
+          if ls /usr/lib/*/qt6/plugins/imageformats/libqsvg.so >/dev/null 2>&1; then
+            echo "Qt SVG image plugin present - the mic icon will render"
+          else
+            echo "*** Qt SVG image plugin missing: qrc:/images/mic.svg will not render ***"
+            exit 1
+          fi
