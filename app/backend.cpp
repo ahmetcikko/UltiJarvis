@@ -1,6 +1,7 @@
 #include "backend.h"
 #include "apikey.h"
 #include "audio_processor.h"
+#include "platform.h"
 #include "whisper_wrapper.h"
 #include <QCoreApplication>
 #include <QDebug>
@@ -28,32 +29,6 @@
 #include <boost/process/v1.hpp>
 #else
 #include <boost/process.hpp>
-#endif
-
-#ifdef _WIN32
-#include <windows.h>
-
-#include <initguid.h>
-
-#include <endpointvolume.h>
-#include <mmdeviceapi.h>
-#include <psapi.h>
-#include <shellapi.h>
-#include <tlhelp32.h>
-#else
-#include <csignal>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-#endif
-#ifdef __APPLE__
-#include <libproc.h>
-#endif
-
-#if BOOST_VERSION >= 108600
-namespace bp = boost::process::v1;
-#else
-namespace bp = boost::process;
 #endif
 
 static constexpr std::int64_t kHardCapMs = 10000;
@@ -240,59 +215,6 @@ static int score_pair(const QString &q, const QString &c) {
     return int(100.0 * (1.0 - double(d) / m));
 }
 
-static std::string home_dir() {
-#ifdef _WIN32
-    const char *profile = getenv("USERPROFILE");
-    return profile ? std::string(profile) : std::string();
-#else
-    const char *home = getenv("HOME");
-    return home ? std::string(home) : std::string();
-#endif
-}
-
-static bool spawn(const QStringList &args) {
-    if (args.isEmpty())
-        return false;
-    std::vector<std::string> argv;
-    for (const QString &a : args)
-        argv.push_back(a.toStdString());
-    boost::filesystem::path exe;
-    try {
-        exe = bp::search_path(argv[0]);
-    } catch (...) {
-    }
-    if (exe.empty())
-        exe = boost::filesystem::path(argv[0]);
-    std::vector<std::string> rest(argv.begin() + 1, argv.end());
-    std::string dir = home_dir();
-    std::thread([exe, rest, dir]() {
-        try {
-            if (dir.empty()) {
-                bp::child c(exe, rest);
-                c.wait();
-            } else {
-                bp::child c(exe, rest, bp::start_dir(dir));
-                c.wait();
-            }
-        } catch (...) {
-        }
-    }).detach();
-    return true;
-}
-
-static bool open_path(const QString &path) {
-#ifdef _WIN32
-    std::wstring w = path.toStdWString();
-    HINSTANCE r = ShellExecuteW(nullptr, L"open", w.c_str(), nullptr, nullptr,
-                                SW_SHOWNORMAL);
-    return reinterpret_cast<INT_PTR>(r) > 32;
-#elif defined(__APPLE__)
-    return spawn({"open", path});
-#else
-    return spawn({"xdg-open", path});
-#endif
-}
-
 static bool launch_app(const DesktopApp &app) {
     QStringList tokens;
     QString cur;
@@ -335,21 +257,8 @@ static bool launch_app(const DesktopApp &app) {
         if (!clean.isEmpty())
             args << clean;
     }
-#ifdef __linux__
-    if (args.isEmpty())
-        return false;
-    return spawn(args);
-#else
-    return open_path(app.exec);
-#endif
+    return platform::launch_parsed(args, app.exec);
 }
-
-struct ProcEntry {
-    int pid;
-    QString comm;
-    std::string exe;
-    std::uint64_t rss;
-};
 
 static bool is_critical_comm(const QString &comm) {
     static const std::vector<QString> critical = {"systemd",
@@ -416,283 +325,27 @@ static bool is_critical_comm(const QString &comm) {
     return false;
 }
 
-#ifdef _WIN32
-static int parent_pid(int pid) {
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE)
-        return 0;
-    int ppid = 0;
-    PROCESSENTRY32W pe;
-    pe.dwSize = sizeof(pe);
-    if (Process32FirstW(snap, &pe)) {
-        do {
-            if (int(pe.th32ProcessID) == pid) {
-                ppid = int(pe.th32ParentProcessID);
-                break;
-            }
-        } while (Process32NextW(snap, &pe));
-    }
-    CloseHandle(snap);
-    return ppid;
-}
-#elif defined(__APPLE__)
-static int parent_pid(int pid) {
-    struct proc_bsdinfo bsd;
-    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &bsd, sizeof(bsd)) ==
-        int(sizeof(bsd)))
-        return int(bsd.pbi_ppid);
-    return 0;
-}
-#else
-static int parent_pid(int pid) {
-    std::ifstream f("/proc/" + std::to_string(pid) + "/stat");
-    std::string content;
-    std::getline(f, content);
-    size_t p = content.rfind(')');
-    if (p == std::string::npos)
-        return 0;
-    int ppid = 0;
-
-    // comm can itself contain spaces/parens, so parse from the last ')' not the
-    // first
-    if (std::sscanf(content.c_str() + p + 1, " %*c %d", &ppid) != 1)
-        return 0;
-    return ppid;
-}
-#endif
-
 static bool is_own_lineage(int pid) {
     static const std::unordered_set<int> chain = []() {
         std::unordered_set<int> s;
         int cur = int(boost::this_process::get_id());
         for (int i = 0; i < 64 && cur > 1; i++) {
             s.insert(cur);
-            cur = parent_pid(cur);
+            cur = platform::parent_pid(cur);
         }
         return s;
     }();
     return chain.contains(pid);
 }
 
-#ifdef _WIN32
-static bool is_system_path(const std::string &path) {
-    wchar_t win[MAX_PATH];
-    UINT n = GetWindowsDirectoryW(win, MAX_PATH);
-    if (!n)
-        return false;
-    return QString::fromStdString(path).startsWith(
-        QString::fromWCharArray(win, int(n)), Qt::CaseInsensitive);
-}
-#elif defined(__APPLE__)
-static bool is_system_path(const std::string &path) {
-    static const std::vector<std::string> roots = {
-        "/System/", "/usr/libexec/", "/usr/sbin/", "/sbin/", "/usr/bin/"};
-    for (const std::string &r : roots)
-        if (path.rfind(r, 0) == 0)
-            return true;
-    return false;
-}
-#else
-static bool is_system_path(const std::string &path) {
-    static const std::vector<std::string> roots = {
-        "/usr/lib/systemd/",  "/lib/systemd/",  "/usr/libexec/",
-        "/usr/sbin/",         "/sbin/",         "/usr/lib/gdm",
-        "/usr/lib/polkit-1/", "/usr/lib/xorg/", "/usr/lib/dbus-1.0/"};
-    for (const std::string &r : roots)
-        if (path.rfind(r, 0) == 0)
-            return true;
-    return false;
-}
-#endif
-
-#ifdef __linux__
-static std::string cgroup_path(const std::string &line) {
-    // cgroup v1 lines are "N:controller:path", v2 is "0::path" - skip past both
-    // colons either way
-    size_t first = line.find(':');
-    if (first == std::string::npos)
-        return line;
-    size_t second = line.find(':', first + 1);
-    if (second == std::string::npos)
-        return line;
-    return line.substr(second + 1);
-}
-
-static bool in_app_slice(int pid) {
-    std::ifstream f("/proc/" + std::to_string(pid) + "/cgroup");
-    std::string line;
-    while (std::getline(f, line))
-        if (cgroup_path(line).find("/app.slice/") != std::string::npos)
-            return true;
-    return false;
-}
-#endif
-
 static bool is_protected(const ProcEntry &e) {
     if (e.pid <= 1)
         return true;
     if (e.pid == int(boost::this_process::get_id()))
         return true;
-    if (!e.exe.empty() && is_system_path(e.exe))
+    if (!e.exe.empty() && platform::is_system_path(e.exe))
         return true;
-#ifdef __linux__
-
-    // only shield our own process tree from itself when it's not a real desktop
-    // app, otherwise a terminal that launched us would become unkillable
-    if (is_own_lineage(e.pid) && !in_app_slice(e.pid))
-        return true;
-    std::ifstream f("/proc/" + std::to_string(e.pid) + "/cgroup");
-    std::string line;
-    while (std::getline(f, line)) {
-        std::string path = cgroup_path(line);
-        if (path.find("/system.slice/") != std::string::npos ||
-            path.find("/init.scope") != std::string::npos ||
-            path.find("/session.slice/") != std::string::npos ||
-            path.find("/background.slice/") != std::string::npos)
-            return true;
-        size_t slash = path.rfind('/');
-        if (slash != std::string::npos) {
-            std::string leaf = path.substr(slash + 1);
-            if (leaf.size() > 8 &&
-                leaf.compare(leaf.size() - 8, 8, ".service") == 0)
-                return true;
-        }
-    }
-#else
-    if (is_own_lineage(e.pid))
-        return true;
-#endif
-    return false;
-}
-
-#ifdef _WIN32
-static std::vector<ProcEntry> enumerate_procs() {
-    std::vector<ProcEntry> out;
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE)
-        return out;
-    PROCESSENTRY32W pe;
-    pe.dwSize = sizeof(pe);
-    if (Process32FirstW(snap, &pe)) {
-        do {
-            HANDLE h =
-                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
-                            FALSE, pe.th32ProcessID);
-            if (!h)
-                continue;
-            ProcEntry e;
-            e.pid = int(pe.th32ProcessID);
-            e.comm = QString::fromWCharArray(pe.szExeFile);
-            if (e.comm.endsWith(".exe", Qt::CaseInsensitive))
-                e.comm.chop(4);
-            e.rss = 0;
-            wchar_t buf[MAX_PATH];
-            DWORD len = MAX_PATH;
-            if (QueryFullProcessImageNameW(h, 0, buf, &len))
-                e.exe = QString::fromWCharArray(buf, int(len)).toStdString();
-            PROCESS_MEMORY_COUNTERS pmc;
-            if (GetProcessMemoryInfo(h, &pmc, sizeof(pmc)))
-                e.rss = std::uint64_t(pmc.WorkingSetSize);
-            CloseHandle(h);
-            if (!e.comm.isEmpty())
-                out.push_back(e);
-        } while (Process32NextW(snap, &pe));
-    }
-    CloseHandle(snap);
-    return out;
-}
-#elif defined(__APPLE__)
-static std::vector<ProcEntry> enumerate_procs() {
-    std::vector<ProcEntry> out;
-    int bytes = proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
-    if (bytes <= 0)
-        return out;
-    std::vector<pid_t> pids(std::size_t(bytes) / sizeof(pid_t) + 64, 0);
-    bytes = proc_listpids(PROC_ALL_PIDS, 0, pids.data(),
-                          int(pids.size() * sizeof(pid_t)));
-    if (bytes <= 0)
-        return out;
-    int n = bytes / int(sizeof(pid_t));
-    uid_t self = getuid();
-    for (int i = 0; i < n; i++) {
-        if (pids[i] <= 0)
-            continue;
-        struct proc_bsdinfo bsd;
-        if (proc_pidinfo(pids[i], PROC_PIDTBSDINFO, 0, &bsd, sizeof(bsd)) !=
-            int(sizeof(bsd)))
-            continue;
-        if (bsd.pbi_uid != self)
-            continue;
-        ProcEntry e;
-        e.pid = int(pids[i]);
-        e.comm =
-            QString::fromUtf8(bsd.pbi_name[0] ? bsd.pbi_name : bsd.pbi_comm);
-        char pathbuf[PROC_PIDPATHINFO_MAXSIZE];
-        if (proc_pidpath(pids[i], pathbuf, sizeof(pathbuf)) > 0)
-            e.exe = pathbuf;
-        e.rss = 0;
-        struct proc_taskinfo ti;
-        if (proc_pidinfo(pids[i], PROC_PIDTASKINFO, 0, &ti, sizeof(ti)) ==
-            int(sizeof(ti)))
-            e.rss = std::uint64_t(ti.pti_resident_size);
-        if (!e.comm.isEmpty())
-            out.push_back(e);
-    }
-    return out;
-}
-#else
-static std::vector<ProcEntry> enumerate_procs() {
-    std::vector<ProcEntry> out;
-    long page = sysconf(_SC_PAGESIZE);
-    uid_t self = getuid();
-    std::error_code ec;
-    for (const std::filesystem::directory_entry &entry :
-         std::filesystem::directory_iterator("/proc", ec)) {
-        std::string name = entry.path().filename().string();
-        if (name.find_first_not_of("0123456789") != std::string::npos)
-            continue;
-        struct stat st;
-        if (stat(("/proc/" + name).c_str(), &st) != 0 || st.st_uid != self)
-            continue;
-        std::ifstream cmd("/proc/" + name + "/cmdline");
-        std::string arg0;
-        std::getline(cmd, arg0, '\0');
-        if (arg0.empty())
-            continue;
-        std::ifstream cf("/proc/" + name + "/comm");
-        std::string comm;
-        std::getline(cf, comm);
-        if (comm.empty())
-            continue;
-        ProcEntry e;
-        e.pid = std::stoi(name);
-        e.comm = QString::fromStdString(comm);
-        std::error_code lec;
-        std::filesystem::path target =
-            std::filesystem::read_symlink("/proc/" + name + "/exe", lec);
-        if (!lec)
-            e.exe = target.string();
-        std::ifstream sm("/proc/" + name + "/statm");
-        std::uint64_t sz = 0, rss = 0;
-        sm >> sz >> rss;
-        e.rss = rss * std::uint64_t(page);
-        out.push_back(e);
-    }
-    return out;
-}
-#endif
-
-static bool terminate_pid(int pid) {
-#ifdef _WIN32
-    HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, DWORD(pid));
-    if (!h)
-        return false;
-    BOOL ok = TerminateProcess(h, 0);
-    CloseHandle(h);
-    return ok != FALSE;
-#else
-    return kill(pid_t(pid), SIGTERM) == 0;
-#endif
+    return platform::is_shielded(e.pid, is_own_lineage(e.pid));
 }
 
 enum class KillOutcome { Killed, NotFound, Protected };
@@ -703,7 +356,7 @@ static KillOutcome terminate_comm(const QString &name) {
     QString short15 = name.left(15);
     bool any = false;
     bool blocked = false;
-    for (const ProcEntry &e : enumerate_procs()) {
+    for (const ProcEntry &e : platform::enumerate_procs()) {
         if (e.comm.compare(name, Qt::CaseInsensitive) != 0 &&
             e.comm.compare(short15, Qt::CaseInsensitive) != 0)
             continue;
@@ -711,7 +364,7 @@ static KillOutcome terminate_comm(const QString &name) {
             blocked = true;
             continue;
         }
-        if (terminate_pid(e.pid))
+        if (platform::terminate_pid(e.pid))
             any = true;
     }
     if (any)
@@ -721,7 +374,7 @@ static KillOutcome terminate_comm(const QString &name) {
 
 static QString running_apps() {
     std::unordered_map<QString, std::uint64_t> apps;
-    for (const ProcEntry &e : enumerate_procs()) {
+    for (const ProcEntry &e : platform::enumerate_procs()) {
         if (is_critical_comm(e.comm) || is_protected(e))
             continue;
         auto it = apps.find(e.comm);
@@ -739,184 +392,23 @@ static QString running_apps() {
     return names.join(", ");
 }
 
-#ifdef _WIN32
-template <typename F> static bool with_endpoint_volume(F fn) {
-    HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    bool ok = false;
-    IMMDeviceEnumerator *devices = nullptr;
-    if (SUCCEEDED(CoCreateInstance(CLSID_MMDeviceEnumerator, nullptr,
-                                   CLSCTX_ALL, IID_IMMDeviceEnumerator,
-                                   reinterpret_cast<void **>(&devices)))) {
-        IMMDevice *endpoint = nullptr;
-        if (SUCCEEDED((*devices).GetDefaultAudioEndpoint(eRender, eMultimedia,
-                                                         &endpoint))) {
-            IAudioEndpointVolume *volume = nullptr;
-            if (SUCCEEDED((*endpoint).Activate(
-                    IID_IAudioEndpointVolume, CLSCTX_ALL, nullptr,
-                    reinterpret_cast<void **>(&volume)))) {
-                fn(volume);
-                (*volume).Release();
-                ok = true;
-            }
-            (*endpoint).Release();
-        }
-        (*devices).Release();
-    }
-    if (SUCCEEDED(init))
-        CoUninitialize();
-    return ok;
-}
-#endif
-
-static bool set_mute(bool mute) {
-#ifdef _WIN32
-    return with_endpoint_volume([mute](IAudioEndpointVolume *v) {
-        (*v).SetMute(mute ? TRUE : FALSE, nullptr);
-    });
-#elif defined(__APPLE__)
-    return spawn(
-        {"osascript", "-e",
-         QString("set volume output muted ") + (mute ? "true" : "false")});
-#else
-    return spawn(
-        {"pactl", "set-sink-mute", "@DEFAULT_SINK@", mute ? "1" : "0"});
-#endif
-}
-
-static bool step_volume(int delta) {
-#ifdef _WIN32
-    return with_endpoint_volume([delta](IAudioEndpointVolume *v) {
-        float level = 0.0f;
-        if (FAILED((*v).GetMasterVolumeLevelScalar(&level)))
-            return;
-        level += float(delta) / 100.0f;
-        level = level < 0.0f ? 0.0f : (level > 1.0f ? 1.0f : level);
-        (*v).SetMasterVolumeLevelScalar(level, nullptr);
-    });
-#elif defined(__APPLE__)
-    return spawn({"osascript", "-e",
-                  QString("set volume output volume "
-                          "(output volume of (get volume settings) ") +
-                      (delta >= 0 ? "+ " : "- ") +
-                      QString::number(delta < 0 ? -delta : delta) + ")"});
-#else
-    return spawn(
-        {"pactl", "set-sink-volume", "@DEFAULT_SINK@",
-         QString(delta >= 0 ? "+" : "") + QString::number(delta) + "%"});
-#endif
-}
-
-static bool set_volume(int level) {
-#ifdef _WIN32
-    return with_endpoint_volume([level](IAudioEndpointVolume *v) {
-        (*v).SetMute(FALSE, nullptr);
-        (*v).SetMasterVolumeLevelScalar(float(level) / 100.0f, nullptr);
-    });
-#elif defined(__APPLE__)
-    return spawn({"osascript", "-e", "set volume output muted false"}) &&
-           spawn({"osascript", "-e",
-                  "set volume output volume " + QString::number(level)});
-#else
-    return spawn({"pactl", "set-sink-mute", "@DEFAULT_SINK@", "0"}) &&
-           spawn({"pactl", "set-sink-volume", "@DEFAULT_SINK@",
-                  QString::number(level) + "%"});
-#endif
-}
-
-static bool system_power(const QString &action) {
-#ifdef _WIN32
-    if (action == "shutdown")
-        return spawn({"shutdown", "/s", "/t", "0"});
-    if (action == "reboot")
-        return spawn({"shutdown", "/r", "/t", "0"});
-    return spawn({"rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"});
-#elif defined(__APPLE__)
-    if (action == "shutdown")
-        return spawn({"osascript", "-e",
-                      "tell application \"System Events\" to shut down"});
-    if (action == "reboot")
-        return spawn({"osascript", "-e",
-                      "tell application \"System Events\" to restart"});
-    return spawn(
-        {"osascript", "-e", "tell application \"System Events\" to sleep"});
-#else
-    if (action == "shutdown")
-        return spawn({"systemctl", "poweroff"});
-    if (action == "reboot")
-        return spawn({"systemctl", "reboot"});
-    return spawn({"systemctl", "suspend"});
-#endif
-}
-
 static bool open_url(const QString &url) {
     QString u = url.trimmed();
     if (u.isEmpty())
         return false;
     if (!u.contains("://"))
         u = "https://" + u;
-    return open_path(u);
-}
-
-static std::string config_dir() {
-#ifdef _WIN32
-    const char *appdata = getenv("APPDATA");
-    std::string base =
-        appdata && *appdata ? std::string(appdata) : std::string();
-#elif defined(__APPLE__)
-    const char *home = getenv("HOME");
-    std::string base =
-        std::string(home ? home : "") + "/Library/Application Support";
-#else
-    const char *xdg = getenv("XDG_CONFIG_HOME");
-    const char *home = getenv("HOME");
-    std::string base = xdg && *xdg ? std::string(xdg)
-                                   : std::string(home ? home : "") + "/.config";
-#endif
-    return base + "/ultijarvis";
+    return platform::open_path(u);
 }
 
 static QString config_value(const char *key) {
-    std::ifstream f(config_dir() + "/config");
+    std::ifstream f(platform::config_dir() + "/config");
     std::string line;
     std::string want = std::string(key) + "=";
     while (std::getline(f, line))
         if (line.rfind(want, 0) == 0)
             return QString::fromStdString(line.substr(want.size()));
     return "";
-}
-
-static QStringList app_dirs() {
-    QStringList dirs;
-#ifdef _WIN32
-    const char *appdata = getenv("APPDATA");
-    const char *programdata = getenv("ProgramData");
-    if (appdata && *appdata)
-        dirs.append(QString::fromUtf8(appdata) +
-                    "/Microsoft/Windows/Start Menu/Programs");
-    if (programdata && *programdata)
-        dirs.append(QString::fromUtf8(programdata) +
-                    "/Microsoft/Windows/Start Menu/Programs");
-#elif defined(__APPLE__)
-    const char *home = getenv("HOME");
-    dirs.append("/Applications");
-    dirs.append("/System/Applications");
-    if (home && *home)
-        dirs.append(QString::fromUtf8(home) + "/Applications");
-#else
-    const char *home = getenv("HOME");
-    const char *dataHome = getenv("XDG_DATA_HOME");
-    std::string base = dataHome && *dataHome
-                           ? std::string(dataHome)
-                           : std::string(home ? home : "") + "/.local/share";
-    dirs.append(QString::fromStdString(base + "/applications"));
-    const char *dataDirs = getenv("XDG_DATA_DIRS");
-    std::string list =
-        dataDirs && *dataDirs ? dataDirs : "/usr/local/share:/usr/share";
-    for (const QString &d :
-         QString::fromStdString(list).split(':', Qt::SkipEmptyParts))
-        dirs.append(d + "/applications");
-#endif
-    return dirs;
 }
 
 static QString kv_get(const std::unordered_map<QString, QString> &kv,
@@ -1166,22 +658,22 @@ void Backend::dispatch(const QString &content) {
     } else if (action == "volume") {
         QString t = obj["target"].toString().trimmed().toLower();
         if (t == "mute") {
-            set_mute(true);
+            platform::set_mute(true);
             finish("Muted.", 2200, "action");
         } else if (t == "unmute") {
-            set_mute(false);
+            platform::set_mute(false);
             finish("Unmuted.", 2200, "action");
         } else if (t == "up") {
-            step_volume(10);
+            platform::step_volume(10);
             finish("Volume up.", 2200, "action");
         } else if (t == "down") {
-            step_volume(-10);
+            platform::step_volume(-10);
             finish("Volume down.", 2200, "action");
         } else {
             bool okNum = false;
             int level = t.remove('%').toInt(&okNum);
             if (okNum && level >= 0 && level <= 100) {
-                set_volume(level);
+                platform::set_volume(level);
                 finish("Volume " + QString::number(level) + "%.", 2200,
                        "action");
             } else {
@@ -1238,7 +730,7 @@ void Backend::confirmPower() {
     m_pendingpower.clear();
     if (t.isEmpty())
         return;
-    system_power(t);
+    platform::system_power(t);
     finish(t == "shutdown"  ? "Shutting down…"
            : t == "reboot" ? "Restarting…"
                            : "Going to sleep…",
@@ -1254,7 +746,7 @@ void Backend::cancelPower() {
 
 void Backend::scan_desktops() {
     m_apps.clear();
-    QStringList dirs = app_dirs();
+    QStringList dirs = platform::app_dirs();
     std::unordered_set<QString> seen;
     for (const QString &dir : dirs) {
         std::error_code ec;
