@@ -7,13 +7,36 @@ set -e
 WEBRTC_REPO=https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing.git
 WEBRTC_TAG=v1.3
 
+have_apm() {
+    pkg-config --exists webrtc-audio-processing-1
+}
+
+# Several distributions either have no webrtc-audio-processing 1.x package
+# (Ubuntu 24.04 ships only 0.3) or have moved on to 2.x, whose pkg-config name
+# does not match. Homebrew has no formula at all. Build the upstream release
+# that provides webrtc-audio-processing-1 in those cases.
+build_webrtc() {
+    prefix=$1
+    as_root=$2
+    command -v meson >/dev/null 2>&1 || {
+        echo "meson is required to build webrtc-audio-processing." >&2
+        exit 1
+    }
+    work=$(mktemp -d)
+    trap 'rm -rf "$work"' EXIT
+    git clone --depth 1 --branch "$WEBRTC_TAG" "$WEBRTC_REPO" "$work/src"
+    meson setup "$work/build" "$work/src" \
+        --prefix "$prefix" \
+        --libdir lib \
+        --buildtype release
+    $as_root meson install -C "$work/build"
+}
+
 require_apm() {
-    if pkg-config --exists webrtc-audio-processing-1; then
+    if have_apm; then
         return 0
     fi
-    echo "pkg-config cannot find webrtc-audio-processing-1." >&2
-    echo "Ulti Jarvis needs the 1.x API. Packages named plainly" >&2
-    echo "'webrtc-audio-processing' are often 0.3 or 2.x and will not work." >&2
+    echo "pkg-config still cannot find webrtc-audio-processing-1 after install." >&2
     exit 1
 }
 
@@ -33,19 +56,11 @@ if [ "$(uname)" = "Darwin" ]; then
         exit 1
     }
     brew install cmake ninja pkgconf qt boost abseil meson
-
-    # webrtc-audio-processing has no Homebrew formula. Build the upstream
-    # release into the Homebrew prefix, which pkg-config already searches.
-    # abseil comes from Homebrew so the build does not vendor its own copy
-    # and overwrite the headers already installed there.
-    if ! pkg-config --exists webrtc-audio-processing-1; then
-        work=$(mktemp -d)
-        trap 'rm -rf "$work"' EXIT
-        git clone --depth 1 --branch "$WEBRTC_TAG" "$WEBRTC_REPO" "$work/src"
-        meson setup "$work/build" "$work/src" \
-            --prefix "$(brew --prefix)" \
-            --buildtype release
-        meson install -C "$work/build"
+    # abseil comes from Homebrew so the build resolves it through pkg-config
+    # rather than vendoring its own copy, whose install_headers step would
+    # overwrite the abseil headers already in the Homebrew prefix.
+    if ! have_apm; then
+        build_webrtc "$(brew --prefix)" ""
     fi
     require_apm
     exit 0
@@ -73,16 +88,20 @@ fi
 if command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update
     sudo apt-get install -y \
-        build-essential cmake ninja-build pkg-config git \
+        build-essential cmake ninja-build pkg-config git meson \
         qt6-base-dev qt6-declarative-dev qt6-tools-dev qt6-tools-dev-tools \
         libboost-filesystem-dev \
         libvulkan-dev glslc spirv-headers
     # Debian ships 1.x as libwebrtc-audio-processing-dev from trixie onward;
-    # Ubuntu keeps 0.3 under that name and ships 1.x with the -1- infix.
+    # Ubuntu uses the -1- infix where it has 1.x at all.
     PICK_QUERY="apt-cache show"
     apm=$(pick libwebrtc-audio-processing-1-dev libwebrtc-audio-processing-dev) || apm=
     if [ -n "$apm" ]; then
         sudo apt-get install -y "$apm"
+    fi
+    if ! have_apm; then
+        build_webrtc /usr/local sudo
+        sudo ldconfig
     fi
     require_apm
     exit 0
@@ -90,7 +109,7 @@ fi
 
 if command -v dnf >/dev/null 2>&1; then
     sudo dnf install -y \
-        gcc-c++ cmake ninja-build pkgconf-pkg-config git \
+        gcc-c++ cmake ninja-build pkgconf-pkg-config git meson \
         qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel \
         boost-devel \
         vulkan-loader-devel glslc spirv-headers-devel
@@ -99,16 +118,29 @@ if command -v dnf >/dev/null 2>&1; then
     if [ -n "$apm" ]; then
         sudo dnf install -y "$apm"
     fi
+    if ! have_apm; then
+        build_webrtc /usr/local sudo
+        sudo ldconfig
+    fi
     require_apm
     exit 0
 fi
 
 if command -v pacman >/dev/null 2>&1; then
     sudo pacman -S --needed --noconfirm \
-        base-devel cmake ninja pkgconf git \
+        base-devel cmake ninja pkgconf git meson \
         qt6-base qt6-declarative qt6-tools \
-        webrtc-audio-processing-1 boost \
+        boost \
         vulkan-headers shaderc spirv-headers
+    PICK_QUERY="pacman -Si"
+    apm=$(pick webrtc-audio-processing-1) || apm=
+    if [ -n "$apm" ]; then
+        sudo pacman -S --needed --noconfirm "$apm"
+    fi
+    if ! have_apm; then
+        build_webrtc /usr/local sudo
+        sudo ldconfig
+    fi
     require_apm
     exit 0
 fi
