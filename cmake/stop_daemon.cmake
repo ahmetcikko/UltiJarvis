@@ -6,7 +6,7 @@ if(WIN32)
     )
 else()
     execute_process(
-        COMMAND pkill -f Ulti-Jarvis-Daemon
+        COMMAND pkill -f "Ulti-Jarvis-Daemon$"
         OUTPUT_QUIET
         ERROR_QUIET
     )

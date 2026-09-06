@@ -54,6 +54,13 @@ jobs:
       - name: Build
         run: cmake --build build --parallel 2
 
+      - name: Kernel and resource check
+        if: always()
+        run: |
+          free -h || true
+          df -h . || true
+          sudo dmesg 2>/dev/null | grep -iE "out of memory|killed process" | tail -20             || echo "no OOM entries in kernel log"
+
       - name: Package
         run: cpack --config build/CPackConfig.cmake -B dist
 
