@@ -310,6 +310,25 @@ if(LOWWI_ONNXRUNTIME)
     install(FILES ${LOWWI_ONNXRUNTIME}
         DESTINATION ${JARVIS_INSTALL_DIR})
 endif()
+if(UNIX AND NOT APPLE)
+    set(JARVIS_LOCAL_WEBRTC "")
+    foreach(_lib IN LISTS WEBRTC_APM_LINK_LIBRARIES)
+        if(_lib MATCHES "^/usr/local/" AND EXISTS "${_lib}")
+            list(APPEND JARVIS_LOCAL_WEBRTC "${_lib}")
+        endif()
+    endforeach()
+    if(JARVIS_LOCAL_WEBRTC)
+        string(JOIN "\" \"" JARVIS_LOCAL_WEBRTC_QUOTED ${JARVIS_LOCAL_WEBRTC})
+        install(CODE "
+            file(INSTALL
+                DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${JARVIS_INSTALL_DIR}\"
+                TYPE SHARED_LIBRARY
+                FOLLOW_SYMLINK_CHAIN
+                FILES \"${JARVIS_LOCAL_WEBRTC_QUOTED}\"
+            )
+        ")
+    endif()
+endif()
 install(FILES ${WHISPER_MODEL_PATH}
     DESTINATION ${JARVIS_INSTALL_DIR})
 install(FILES ${CMAKE_SOURCE_DIR}/images/mic.svg
