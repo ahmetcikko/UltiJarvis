@@ -290,6 +290,7 @@ jobs:
             otool -L "$f" 2>/dev/null               | sed -n 's/^[[:space:]][[:space:]]*//p'               | sed 's/ (compatibility.*$//' | sort -u               | while IFS= read -r dep; do
               [ -z "$dep" ] && continue
               grep -Fxq "$dep" /tmp/self.txt && continue
+              [ "${dep##*/}" = "${f##*/}" ] && continue
               case "$dep" in
                 /usr/lib/*|/System/*) ;;
                 @rpath/*|@loader_path/*|@executable_path/*)
