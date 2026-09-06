@@ -192,10 +192,6 @@ target_link_libraries(UltiJarvis PRIVATE
     ${WEBRTC_APM_LINK_LIBRARIES}
 )
 target_link_libraries(JarvisDaemon PRIVATE CLFML::lowwi)
-if(ONNXRUNTIME_DLL)
-    target_compile_definitions(JarvisDaemon PRIVATE
-        JARVIS_ONNXRUNTIME_DLL="${ONNXRUNTIME_DLL}")
-endif()
 target_link_libraries(JarvisSettings PRIVATE
     Qt6::Core
     Qt6::Gui

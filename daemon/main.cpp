@@ -133,14 +133,6 @@ extern "C" const OrtApiBase *ORT_API_CALL OrtGetApiBase(void) NO_EXCEPTION {
         } else {
             jlog("onnxruntime.dll is not next to the daemon: " + local.string());
         }
-#ifdef JARVIS_ONNXRUNTIME_DLL
-        if (!lib) {
-            std::filesystem::path configured(JARVIS_ONNXRUNTIME_DLL);
-            if (std::filesystem::exists(configured, ec))
-                lib = LoadLibraryExW(configured.wstring().c_str(), nullptr,
-                                     LOAD_WITH_ALTERED_SEARCH_PATH);
-        }
-#endif
         if (!lib) {
             jlog("onnxruntime could not be loaded at all");
             return nullptr;
