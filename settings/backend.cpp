@@ -15,6 +15,7 @@
 #endif
 #endif
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -51,6 +52,22 @@ static std::filesystem::path log_path() {
     return std::filesystem::temp_directory_path(ec) / "ultijarvis.log";
 }
 
+static void jlog(const std::string &msg) {
+    std::ofstream f(log_path(), std::ios::app);
+    if (!f.is_open())
+        return;
+    std::time_t t = std::time(nullptr);
+    char stamp[32] = {0};
+    std::tm tm {};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
+    f << stamp << "  settings: " << msg << "\n";
+}
+
 static int daemon_pid() {
     std::ifstream f(pid_path());
     int pid = 0;
@@ -63,8 +80,10 @@ static void run_tool(const std::string &tool,
                      const std::vector<std::string> &args) {
     try {
         boost::filesystem::path exe = bp::search_path(tool);
-        if (exe.empty())
+        if (exe.empty()) {
+            jlog(tool + " not found on PATH");
             return;
+        }
 #ifdef _WIN32
         bp::child c(exe, args, bp::std_out > bp::null, bp::std_err > bp::null,
                     bp::windows::hide);
@@ -72,7 +91,12 @@ static void run_tool(const std::string &tool,
         bp::child c(exe, args, bp::std_out > bp::null, bp::std_err > bp::null);
 #endif
         c.wait();
+        if (c.exit_code() != 0)
+            jlog(tool + " exited with " + std::to_string(c.exit_code()));
+    } catch (const std::exception &e) {
+        jlog(tool + " failed: " + e.what());
     } catch (...) {
+        jlog(tool + " failed");
     }
 }
 
@@ -124,8 +148,8 @@ static void register_autostart() {
                    DWORD((value.size() + 1) * sizeof(wchar_t)));
     RegCloseKey(key);
     run_tool("schtasks", {"/Create", "/TN", "UltiJarvisDaemon", "/TR",
-                          "\"" + daemon_path().string() + "\"", "/SC",
-                          "MINUTE", "/MO", "10", "/F"});
+                          daemon_path().string(), "/SC", "MINUTE", "/MO", "10",
+                          "/F"});
 #else
     std::error_code ec;
     std::filesystem::path entry = autostart_path();
@@ -193,13 +217,20 @@ static void unregister_autostart() {
 static void start_daemon() {
     std::filesystem::path exe = daemon_path();
     std::error_code ec;
-    if (!std::filesystem::exists(exe, ec))
+    if (!std::filesystem::exists(exe, ec)) {
+        jlog("daemon binary missing at " + exe.string());
         return;
+    }
     std::thread([exe]() {
         try {
             bp::child c(boost::filesystem::path(exe.string()));
+            jlog("started daemon, pid " + std::to_string(c.id()));
             c.wait();
+            jlog("daemon exited with " + std::to_string(c.exit_code()));
+        } catch (const std::exception &e) {
+            jlog(std::string("daemon launch failed: ") + e.what());
         } catch (...) {
+            jlog("daemon launch failed");
         }
     }).detach();
 }
