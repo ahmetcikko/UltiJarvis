@@ -36,9 +36,6 @@ jobs:
       - name: Install dependencies
         run: ./scripts/install-deps.sh
 
-      - name: Install a C++26 compiler
-        run: sudo apt-get install -y g++-14
-
       - name: Provide empty API key
         run: cp app/apikey.h.example app/apikey.h
 
@@ -46,9 +43,6 @@ jobs:
         run: free -h || true; df -h . || true; nproc || true
 
       - name: Configure
-        env:
-          CC: gcc-14
-          CXX: g++-14
         run: cmake -S . -B build -G Ninja
 
       - name: Build
