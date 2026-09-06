@@ -4,3 +4,5 @@ build/
 lib/
 ggml-*.bin
 app/apikey.h
+dist/
+.DS_Store
