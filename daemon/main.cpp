@@ -116,37 +116,6 @@ static void install_crash_handlers() {
 #endif
 }
 
-#ifdef _WIN32
-extern "C" const OrtApiBase *ORT_API_CALL OrtGetApiBase(void) NO_EXCEPTION {
-    static const OrtApiBase *api = []() -> const OrtApiBase * {
-        HMODULE lib = nullptr;
-        std::error_code ec;
-        std::filesystem::path local = exe_dir() / "onnxruntime.dll";
-        if (std::filesystem::exists(local, ec)) {
-            std::uintmax_t sz = std::filesystem::file_size(local, ec);
-            lib = LoadLibraryExW(local.wstring().c_str(), nullptr,
-                                 LOAD_WITH_ALTERED_SEARCH_PATH);
-            jlog("onnxruntime.dll found (" + std::to_string(sz) + " bytes), load " +
-                 (lib ? "ok"
-                      : "FAILED GetLastError=" +
-                            std::to_string(GetLastError())));
-        } else {
-            jlog("onnxruntime.dll is not next to the daemon: " + local.string());
-        }
-        if (!lib) {
-            jlog("onnxruntime could not be loaded at all");
-            return nullptr;
-        }
-        auto entry = reinterpret_cast<const OrtApiBase *(ORT_API_CALL *)(void)>(
-            reinterpret_cast<void *>(GetProcAddress(lib, "OrtGetApiBase")));
-        if (!entry)
-            jlog("onnxruntime.dll has no OrtGetApiBase export");
-        return entry ? entry() : nullptr;
-    }();
-    return api;
-}
-#endif
-
 static std::filesystem::path app_path() {
 #ifdef _WIN32
     return exe_dir() / "Ulti Jarvis.exe";
@@ -351,14 +320,12 @@ int main() {
     jlog("cwd = " + std::filesystem::current_path(ec).string());
 #ifdef _WIN32
     const OrtApiBase *ort = OrtGetApiBase();
-    if (!ort) {
-        jlog("onnxruntime is unavailable, the daemon cannot run");
-        return 1;
-    }
-    if (!ort->GetApi(ORT_API_VERSION)) {
-        jlog(std::string("onnxruntime is too old: this build needs API ") +
-             std::to_string(ORT_API_VERSION) + ", the loaded library is " +
-             ort->GetVersionString());
+    if (!ort || !ort->GetApi(ORT_API_VERSION)) {
+        jlog(std::string("onnxruntime unusable: this build needs API ") +
+             std::to_string(ORT_API_VERSION) +
+             (ort ? std::string(", loaded library is ") +
+                        ort->GetVersionString()
+                  : std::string(", no library resolved")));
         return 1;
     }
     jlog(std::string("onnxruntime ready, version ") + ort->GetVersionString());
