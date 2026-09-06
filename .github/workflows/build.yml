@@ -167,3 +167,82 @@ jobs:
             dist/*.exe
             dist/*.zip
           if-no-files-found: warn
+
+  windows-cleanroom:
+    needs: windows
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.all_platforms)
+      || startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-packages
+          path: pkg
+
+      - name: Prove this machine has no MSYS2 on PATH
+        shell: pwsh
+        run: |
+          $bad = $env:PATH -split ';' | Where-Object { $_ -like '*msys64*' -or $_ -like '*mingw*' }
+          if ($bad) {
+            Write-Host "Stripping toolchain entries: $($bad -join ', ')"
+            $clean = ($env:PATH -split ';' | Where-Object { $_ -notlike '*msys64*' -and $_ -notlike '*mingw*' }) -join ';'
+            "PATH=$clean" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          } else {
+            Write-Host "PATH already free of MSYS2/MinGW."
+          }
+
+      - name: Extract the package
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem pkg -Recurse -Filter *.zip | Select-Object -First 1
+          if (-not $zip) { throw "no zip artifact found" }
+          Write-Host "Extracting $($zip.Name)"
+          Expand-Archive -Path $zip.FullName -DestinationPath app -Force
+          $sub = Get-ChildItem app -Directory
+          $root = if ($sub.Count -eq 1) { $sub[0].FullName } else { (Resolve-Path app).Path }
+          Write-Host "App dir: $root"
+          "APPDIR=$root" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Load every bundled DLL with the real Windows loader
+        shell: pwsh
+        run: |
+          $dir = $env:APPDIR
+          $env:PATH = "$dir;$env:PATH"
+          $ok = 0; $fail = 0
+          foreach ($f in Get-ChildItem $dir -Recurse -Filter *.dll) {
+            try {
+              [void][System.Runtime.InteropServices.NativeLibrary]::Load($f.FullName)
+              $ok++
+            } catch {
+              $rel = $f.FullName.Substring($dir.Length).TrimStart('')
+              Write-Host "FAIL  $rel : $($_.Exception.InnerException.Message)"
+              $fail++
+            }
+          }
+          Write-Host ""
+          Write-Host "DLLs loaded OK : $ok"
+          Write-Host "DLLs failed    : $fail"
+          if ($fail -gt 0) { throw "$fail DLL(s) could not be loaded on a clean machine" }
+
+      - name: Launch the app and check it does not die from a missing DLL
+        shell: pwsh
+        run: |
+          $dir = $env:APPDIR
+          foreach ($name in @('Ulti-Jarvis-Settings.exe', 'Ulti-Jarvis-Daemon.exe')) {
+            $exe = Join-Path $dir $name
+            if (-not (Test-Path $exe)) { throw "missing executable: $name" }
+            Write-Host "--- starting $name ---"
+            $p = Start-Process -FilePath $exe -PassThru
+            Start-Sleep -Seconds 10
+            if ($p.HasExited) {
+              $c = $p.ExitCode
+              Write-Host "$name exited with $c (0x$('{0:X8}' -f $c))"
+              if ($c -eq -1073741515) { throw "$name : STATUS_DLL_NOT_FOUND - the package is missing a DLL" }
+              if ($c -eq -1073741511) { throw "$name : STATUS_ENTRYPOINT_NOT_FOUND - a bundled DLL is the wrong version" }
+              Write-Host "$name exited, but not from a missing DLL (CI has no audio device or desktop)."
+            } else {
+              Write-Host "$name still running after 10s - started cleanly."
+              Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            }
+          }
