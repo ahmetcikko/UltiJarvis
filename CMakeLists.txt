@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.30...4.3)
 project(UltiJarvis VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -273,6 +273,9 @@ endif()
 
 if(ONNXRUNTIME_DLL)
     install(CODE "
+        if(POLICY CMP0207)
+            cmake_policy(SET CMP0207 NEW)
+        endif()
         file(GET_RUNTIME_DEPENDENCIES
             LIBRARIES \"${ONNXRUNTIME_DLL}\"
             RESOLVED_DEPENDENCIES_VAR _ort_resolved
