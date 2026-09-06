@@ -345,6 +345,31 @@ if(JARVIS_DEPLOY_QT AND COMMAND qt_generate_deploy_app_script)
         )
         install(SCRIPT ${JARVIS_DEPLOY_SCRIPT})
     endforeach()
+    if(WIN32)
+        install(CODE "
+            if(POLICY CMP0207)
+                cmake_policy(SET CMP0207 NEW)
+            endif()
+            file(GLOB_RECURSE _jarvis_runtime_plugins
+                \"\${CMAKE_INSTALL_PREFIX}/plugins/*.dll\"
+                \"\${CMAKE_INSTALL_PREFIX}/qml/*.dll\")
+            if(_jarvis_runtime_plugins)
+                file(GET_RUNTIME_DEPENDENCIES
+                    LIBRARIES \${_jarvis_runtime_plugins}
+                    RESOLVED_DEPENDENCIES_VAR _jarvis_plugin_deps
+                    UNRESOLVED_DEPENDENCIES_VAR _jarvis_plugin_unresolved
+                    DIRECTORIES \"${JARVIS_RUNTIME_DIR}\"
+                    PRE_EXCLUDE_REGEXES \"api-ms-win-\" \"ext-ms-\"
+                    POST_EXCLUDE_REGEXES \".*[Ss]ystem32.*\"
+                )
+                file(INSTALL
+                    DESTINATION \"\${CMAKE_INSTALL_PREFIX}/${JARVIS_INSTALL_DIR}\"
+                    TYPE SHARED_LIBRARY
+                    FILES \${_jarvis_plugin_deps}
+                )
+            endif()
+        ")
+    endif()
 endif()
 
 if(WIN32)
