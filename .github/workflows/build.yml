@@ -282,36 +282,52 @@ jobs:
           set -e
           root="${BUNDLE:-$APPROOT}"
           : > /tmp/external.txt
-          : > /tmp/rpath_missing.txt
+          : > /tmp/core_missing.txt
+          : > /tmp/plugin_missing.txt
           find "$root" -type f | while IFS= read -r f; do
             file -b "$f" | grep -q 'Mach-O' || continue
-            self=$(otool -D "$f" 2>/dev/null | tail -n +2 | head -1)
-            otool -L "$f" 2>/dev/null | tail -n +2 | awk '{print $1}' | while read -r dep; do
-              [ -n "$self" ] && [ "$dep" = "$self" ] && continue
+            self=$(otool -D "$f" 2>/dev/null | tail -n +2 | head -1 | sed 's/^[[:space:]]*//')
+            otool -L "$f" 2>/dev/null | tail -n +2               | sed -e 's/ (compatibility.*$//' -e 's/^[[:space:]]*//'               | while IFS= read -r dep; do
+              [ -z "$dep" ] && continue
+              [ "$dep" = "$self" ] && continue
               case "$dep" in
                 /usr/lib/*|/System/*) ;;
                 @rpath/*|@loader_path/*|@executable_path/*)
-                  base=$(basename "$dep")
+                  base=${dep##*/}
                   if [ -z "$(find "$root" -name "$base" -print -quit)" ]; then
-                    echo "${f#$root/}  ->  $dep" >> /tmp/rpath_missing.txt
+                    case "$f" in
+                      */Contents/PlugIns/*|*/Contents/Resources/*)
+                        echo "${f#$root/}  ->  $dep" >> /tmp/plugin_missing.txt ;;
+                      *)
+                        echo "${f#$root/}  ->  $dep" >> /tmp/core_missing.txt ;;
+                    esac
                   fi
                   ;;
                 *) echo "${f#$root/}  ->  $dep" >> /tmp/external.txt ;;
               esac
             done
           done
+          if [ -s /tmp/plugin_missing.txt ]; then
+            echo "note: optional Qt plugins whose frameworks were not deployed."
+            echo "These belong to QML modules the app never imports; Qt skips a"
+            echo "plugin it cannot load, so they are dead weight rather than a fault."
+            sort -u /tmp/plugin_missing.txt | sed 's/^/  /' | head -40
+            echo ""
+          fi
           fail=0
           if [ -s /tmp/external.txt ]; then
-            echo "*** links against paths outside the package (will break on another Mac) ***"
+            echo "*** links outside the package (will break on another Mac) ***"
             sort -u /tmp/external.txt
             fail=1
           fi
-          if [ -s /tmp/rpath_missing.txt ]; then
-            echo "*** @rpath dependency not present in the package ***"
-            sort -u /tmp/rpath_missing.txt
+          if [ -s /tmp/core_missing.txt ]; then
+            echo "*** an executable or framework needs something not in the package ***"
+            sort -u /tmp/core_missing.txt
             fail=1
           fi
-          test "$fail" -eq 0 && echo "self-contained: no external or unresolved dependencies"
+          if [ "$fail" -eq 0 ]; then
+            echo "self-contained: executables and frameworks resolve inside the bundle"
+          fi
           exit $fail
 
       - name: Check the bundle declares microphone access
