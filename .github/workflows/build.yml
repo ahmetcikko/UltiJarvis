@@ -265,15 +265,22 @@ jobs:
           tgz=$(find pkg -name '*.tar.gz' | head -1)
           test -n "$tgz" || { echo "no tarball in artifact"; exit 1; }
           mkdir -p app && tar xzf "$tgz" -C app
-          root=$(find app -mindepth 1 -maxdepth 1 -type d | head -1)
-          test -n "$root" || root=app
+          bundle=$(find app -name '*.app' -maxdepth 3 -type d | head -1)
+          if [ -n "$bundle" ]; then
+            root="$bundle/Contents/MacOS"
+            echo "BUNDLE=$(cd "$bundle" && pwd)" >> "$GITHUB_ENV"
+          else
+            root=$(find app -mindepth 1 -maxdepth 1 -type d | head -1)
+            test -n "$root" || root=app
+          fi
           echo "APPROOT=$(cd "$root" && pwd)" >> "$GITHUB_ENV"
-          echo "extracted to $root"
+          echo "binaries in $root"
+          ls "$root" | head -20
 
       - name: Find dependencies that live outside the package
         run: |
           set -e
-          root="$APPROOT"
+          root="${BUNDLE:-$APPROOT}"
           : > /tmp/external.txt
           : > /tmp/rpath_missing.txt
           find "$root" -type f | while IFS= read -r f; do
@@ -304,6 +311,17 @@ jobs:
           fi
           test "$fail" -eq 0 && echo "self-contained: no external or unresolved dependencies"
           exit $fail
+
+      - name: Check the bundle declares microphone access
+        run: |
+          set -e
+          plist="${BUNDLE:-}/Contents/Info.plist"
+          if [ -z "${BUNDLE:-}" ] || [ ! -f "$plist" ]; then
+            echo "*** no .app bundle: macOS will never grant microphone access ***"
+            exit 1
+          fi
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$plist"             || { echo "*** Info.plist has no NSMicrophoneUsageDescription ***"; exit 1; }
+          echo "bundle declares microphone usage"
 
       - name: Launch and check dyld can load everything
         run: |

@@ -7,7 +7,12 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-set(JARVIS_INSTALL_DIR ".")
+if(APPLE)
+    set(JARVIS_BUNDLE_NAME "Ulti Jarvis.app")
+    set(JARVIS_INSTALL_DIR "${JARVIS_BUNDLE_NAME}/Contents/MacOS")
+else()
+    set(JARVIS_INSTALL_DIR ".")
+endif()
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/UltiJarvis"
         CACHE PATH "Where the portable application folder is written" FORCE)
@@ -147,7 +152,7 @@ qt_add_resources(JarvisSettings "settings_fonts"
 )
 
 if(APPLE)
-    set(JARVIS_RPATH "@loader_path")
+    set(JARVIS_RPATH "@loader_path;@loader_path/../Frameworks")
 elseif(UNIX)
     set(JARVIS_RPATH "$ORIGIN")
 else()
@@ -314,6 +319,12 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/lib/Lowwi/models
     DESTINATION ${JARVIS_INSTALL_DIR})
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/sounds
     DESTINATION ${JARVIS_INSTALL_DIR})
+if(APPLE)
+    configure_file(${CMAKE_SOURCE_DIR}/cmake/Info.plist.in
+        ${CMAKE_BINARY_DIR}/Info.plist @ONLY)
+    install(FILES ${CMAKE_BINARY_DIR}/Info.plist
+        DESTINATION "${JARVIS_BUNDLE_NAME}/Contents")
+endif()
 
 if(WIN32 OR APPLE)
     set(JARVIS_DEPLOY_QT_DEFAULT ON)
@@ -322,7 +333,7 @@ else()
 endif()
 option(JARVIS_DEPLOY_QT "Bundle the Qt runtime into the installed folder"
     ${JARVIS_DEPLOY_QT_DEFAULT})
-if(JARVIS_DEPLOY_QT AND COMMAND qt_generate_deploy_app_script)
+if(WIN32 AND JARVIS_DEPLOY_QT AND COMMAND qt_generate_deploy_app_script)
     install(CODE "set(QT_DEPLOY_BIN_DIR \"${JARVIS_INSTALL_DIR}\")")
     install(CODE "set(QT_DEPLOY_LIB_DIR \"${JARVIS_INSTALL_DIR}\")")
     install(CODE "set(QT_DEPLOY_PLUGINS_DIR \"plugins\")")
@@ -369,6 +380,41 @@ if(JARVIS_DEPLOY_QT AND COMMAND qt_generate_deploy_app_script)
                 )
             endif()
         ")
+    endif()
+endif()
+
+if(APPLE AND JARVIS_DEPLOY_QT)
+    find_program(MACDEPLOYQT_EXECUTABLE macdeployqt
+        HINTS
+            "${JARVIS_BREW_PREFIX}/opt/qt/bin"
+            "${JARVIS_BREW_PREFIX}/bin"
+    )
+    if(MACDEPLOYQT_EXECUTABLE)
+        install(CODE "
+            set(_bundle \"\${CMAKE_INSTALL_PREFIX}/${JARVIS_BUNDLE_NAME}\")
+            set(_macos \"\${_bundle}/Contents/MacOS\")
+            file(GLOB _ort \"\${_macos}/libonnxruntime*.dylib\")
+            foreach(_lib IN LISTS _ort)
+                get_filename_component(_name \"\${_lib}\" NAME)
+                execute_process(COMMAND install_name_tool -id \"@rpath/\${_name}\"
+                    \"\${_lib}\" ERROR_QUIET)
+            endforeach()
+            execute_process(
+                COMMAND \"${MACDEPLOYQT_EXECUTABLE}\" \"\${_bundle}\"
+                    \"-executable=\${_macos}/Ulti-Jarvis-Daemon\"
+                    \"-executable=\${_macos}/Ulti-Jarvis-Settings\"
+                    \"-qmldir=${CMAKE_CURRENT_SOURCE_DIR}\"
+                RESULT_VARIABLE _macdeployqt_result
+            )
+            if(NOT _macdeployqt_result EQUAL 0)
+                message(FATAL_ERROR
+                    \"macdeployqt failed with \${_macdeployqt_result}\")
+            endif()
+        ")
+    else()
+        message(WARNING
+            "macdeployqt was not found; the macOS package will link against "
+            "Homebrew and will not run on another Mac")
     endif()
 endif()
 
