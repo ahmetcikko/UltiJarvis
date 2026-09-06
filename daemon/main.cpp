@@ -259,7 +259,7 @@ int main() {
     ma_device_config config;
     open_capture(&context, &device, &config, &matched_id, &ww_runtime);
 
-    // suspend/resume can silently kill the underlying capture without
+    // Suspend/resume can silently kill the underlying capture without
     // firing an error, so watch the callback clock and reopen if it goes quiet
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(kPollSeconds));
