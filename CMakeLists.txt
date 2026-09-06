@@ -421,7 +421,7 @@ exit 0
     set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Ahmet <ahmetcikko@gmail.com>")
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
-        "procps, polkitd, xdg-utils, pulseaudio-utils, systemd")
+        "procps, polkitd, xdg-utils, pulseaudio-utils, systemd, libqt6svg6")
     set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "libvulkan1")
     set(CPACK_PACKAGING_INSTALL_PREFIX "/usr/lib/ultijarvis")
 endif()

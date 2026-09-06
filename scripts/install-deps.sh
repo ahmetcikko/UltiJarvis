@@ -75,6 +75,7 @@ if [ -n "$MSYSTEM" ]; then
         mingw-w64-ucrt-x86_64-qt6-base \
         mingw-w64-ucrt-x86_64-qt6-declarative \
         mingw-w64-ucrt-x86_64-qt6-tools \
+        mingw-w64-ucrt-x86_64-qt6-svg \
         mingw-w64-ucrt-x86_64-boost \
         mingw-w64-ucrt-x86_64-webrtc-audio-processing-1 \
         mingw-w64-ucrt-x86_64-onnxruntime \
@@ -99,6 +100,10 @@ if command -v apt-get >/dev/null 2>&1; then
     if [ -n "$apm" ]; then
         sudo apt-get install -y "$apm"
     fi
+    svg=$(pick libqt6svg6-dev qt6-svg-dev libqt6svg6) || svg=
+    if [ -n "$svg" ]; then
+        sudo apt-get install -y "$svg"
+    fi
     if ! have_apm; then
         build_webrtc /usr/local sudo
         sudo ldconfig
@@ -118,6 +123,10 @@ if command -v dnf >/dev/null 2>&1; then
     if [ -n "$apm" ]; then
         sudo dnf install -y "$apm"
     fi
+    svg=$(pick qt6-qtsvg-devel qt6-qtsvg) || svg=
+    if [ -n "$svg" ]; then
+        sudo dnf install -y "$svg"
+    fi
     if ! have_apm; then
         build_webrtc /usr/local sudo
         sudo ldconfig
@@ -129,7 +138,7 @@ fi
 if command -v pacman >/dev/null 2>&1; then
     sudo pacman -S --needed --noconfirm \
         base-devel cmake ninja pkgconf git meson \
-        qt6-base qt6-declarative qt6-tools \
+        qt6-base qt6-declarative qt6-tools qt6-svg \
         boost \
         vulkan-headers shaderc spirv-headers
     PICK_QUERY="pacman -Si"
