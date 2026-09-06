@@ -11,11 +11,14 @@
 #endif
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <lowwi.hpp>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -80,6 +83,39 @@ static std::filesystem::path exe_dir() {
         boost::dll::program_location().parent_path().string());
 }
 
+static void on_terminate() {
+    try {
+        std::exception_ptr e = std::current_exception();
+        if (e)
+            std::rethrow_exception(e);
+        jlog("FATAL: terminate called with no active exception");
+    } catch (const std::exception &ex) {
+        jlog(std::string("FATAL: unhandled exception: ") + ex.what());
+    } catch (...) {
+        jlog("FATAL: unhandled exception of unknown type");
+    }
+    std::_Exit(1);
+}
+
+#ifdef _WIN32
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS *info) {
+    char buf[160];
+    std::snprintf(buf, sizeof(buf), "FATAL: exception 0x%08lX at %p",
+                  static_cast<unsigned long>(
+                      info->ExceptionRecord->ExceptionCode),
+                  info->ExceptionRecord->ExceptionAddress);
+    jlog(buf);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
+static void install_crash_handlers() {
+    std::set_terminate(on_terminate);
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(crash_filter);
+#endif
+}
+
 #ifdef _WIN32
 extern "C" const OrtApiBase *ORT_API_CALL OrtGetApiBase(void) NO_EXCEPTION {
     static const OrtApiBase *api = []() -> const OrtApiBase * {
@@ -87,11 +123,13 @@ extern "C" const OrtApiBase *ORT_API_CALL OrtGetApiBase(void) NO_EXCEPTION {
         std::error_code ec;
         std::filesystem::path local = exe_dir() / "onnxruntime.dll";
         if (std::filesystem::exists(local, ec)) {
+            std::uintmax_t sz = std::filesystem::file_size(local, ec);
             lib = LoadLibraryExW(local.wstring().c_str(), nullptr,
                                  LOAD_WITH_ALTERED_SEARCH_PATH);
-            if (!lib)
-                jlog("LoadLibrary failed for " + local.string() +
-                     " (GetLastError=" + std::to_string(GetLastError()) + ")");
+            jlog("onnxruntime.dll found (" + std::to_string(sz) + " bytes), load " +
+                 (lib ? "ok"
+                      : "FAILED GetLastError=" +
+                            std::to_string(GetLastError())));
         } else {
             jlog("onnxruntime.dll is not next to the daemon: " + local.string());
         }
@@ -280,6 +318,7 @@ static bool open_capture(ma_context *context, ma_device *device,
 
 int main() {
     detach_from_terminal();
+    install_crash_handlers();
     jlog("=== daemon start, exe=" + exe_dir().string() + " ===");
     std::filesystem::path lockfile = lock_path();
     {
@@ -319,13 +358,31 @@ int main() {
     std::filesystem::current_path(exe_dir(), ec);
     jlog("cwd = " + std::filesystem::current_path(ec).string());
 #ifdef _WIN32
-    if (!OrtGetApiBase()) {
+    const OrtApiBase *ort = OrtGetApiBase();
+    if (!ort) {
         jlog("onnxruntime is unavailable, the daemon cannot run");
         return 1;
     }
-    jlog("onnxruntime ready");
+    if (!ort->GetApi(ORT_API_VERSION)) {
+        jlog(std::string("onnxruntime is too old: this build needs API ") +
+             std::to_string(ORT_API_VERSION) + ", the loaded library is " +
+             ort->GetVersionString());
+        return 1;
+    }
+    jlog(std::string("onnxruntime ready, version ") + ort->GetVersionString());
 #endif
-    CLFML::LOWWI::Lowwi ww_runtime;
+    std::unique_ptr<CLFML::LOWWI::Lowwi> ww_owner;
+    try {
+        ww_owner = std::make_unique<CLFML::LOWWI::Lowwi>();
+        jlog("lowwi runtime created");
+    } catch (const std::exception &e) {
+        jlog(std::string("lowwi init failed: ") + e.what());
+        return 1;
+    } catch (...) {
+        jlog("lowwi init failed");
+        return 1;
+    }
+    CLFML::LOWWI::Lowwi &ww_runtime = *ww_owner;
     CLFML::LOWWI::Lowwi_word_t ww;
     ww.cbfunc = wakeword_callback;
     ww.threshold = 0.3f;
