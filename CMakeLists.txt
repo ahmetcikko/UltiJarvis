@@ -20,6 +20,24 @@ if(WIN32)
     add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
 endif()
 
+if(APPLE)
+    find_program(JARVIS_BREW NAMES brew HINTS /opt/homebrew/bin /usr/local/bin)
+    if(JARVIS_BREW)
+        execute_process(COMMAND ${JARVIS_BREW} --prefix
+            OUTPUT_VARIABLE JARVIS_BREW_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+        foreach(dir "${JARVIS_BREW_PREFIX}" "${JARVIS_BREW_PREFIX}/opt/qt"
+                    "${JARVIS_BREW_PREFIX}/opt/boost" "${JARVIS_BREW_PREFIX}/opt/abseil")
+            if(IS_DIRECTORY "${dir}")
+                list(APPEND CMAKE_PREFIX_PATH "${dir}")
+                if(IS_DIRECTORY "${dir}/lib/pkgconfig")
+                    set(ENV{PKG_CONFIG_PATH} "${dir}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+                endif()
+            endif()
+        endforeach()
+    endif()
+endif()
+
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Quick QuickControls2 LinguistTools)
 find_package(Threads REQUIRED)
 set(Boost_USE_STATIC_LIBS OFF)
@@ -55,6 +73,22 @@ if(WIN32 AND NOT MSVC)
             IMPORTED_LOCATION ${ONNXRUNTIME_DLL}
             INTERFACE_INCLUDE_DIRECTORIES ${ONNXRUNTIME_INCLUDE_DIR})
     endif()
+endif()
+if(APPLE)
+    set(JARVIS_ORT_VERSION 1.18.1)
+    FetchContent_Declare(
+        onnxruntime_bin
+        URL https://github.com/microsoft/onnxruntime/releases/download/v${JARVIS_ORT_VERSION}/onnxruntime-osx-universal2-${JARVIS_ORT_VERSION}.tgz
+        SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/lib/onnxruntime
+        EXCLUDE_FROM_ALL
+    )
+    FetchContent_MakeAvailable(onnxruntime_bin)
+    set(JARVIS_ORT_DYLIB
+        ${onnxruntime_bin_SOURCE_DIR}/lib/libonnxruntime.${JARVIS_ORT_VERSION}.dylib)
+    add_library(onnxruntime SHARED IMPORTED)
+    set_target_properties(onnxruntime PROPERTIES
+        IMPORTED_LOCATION ${JARVIS_ORT_DYLIB}
+        INTERFACE_INCLUDE_DIRECTORIES ${onnxruntime_bin_SOURCE_DIR}/include)
 endif()
 FetchContent_MakeAvailable(Lowwi)
 FetchContent_Declare(
@@ -202,6 +236,9 @@ file(GLOB_RECURSE LOWWI_ONNXRUNTIME
     ${CMAKE_SOURCE_DIR}/lib/Lowwi/lib/*onnxruntime*.dylib
     ${CMAKE_SOURCE_DIR}/lib/Lowwi/lib/*onnxruntime*.dll
 )
+if(JARVIS_ORT_DYLIB)
+    list(APPEND LOWWI_ONNXRUNTIME ${JARVIS_ORT_DYLIB})
+endif()
 if(LOWWI_ONNXRUNTIME)
     add_custom_command(TARGET JarvisDaemon POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
