@@ -184,7 +184,7 @@ target_link_libraries(UltiJarvis PRIVATE
     Qt6::Network
     Qt6::Quick
     whisper
-    ${WEBRTC_APM_LIBRARIES}
+    ${WEBRTC_APM_LINK_LIBRARIES}
 )
 target_link_libraries(JarvisDaemon PRIVATE CLFML::lowwi)
 if(ONNXRUNTIME_DLL)
