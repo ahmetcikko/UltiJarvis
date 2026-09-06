@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <lowwi.hpp>
@@ -103,14 +104,43 @@ static std::filesystem::path lock_path() {
     return std::filesystem::temp_directory_path(ec) / "ultijarvis.lock";
 }
 
-void wakeword_callback(CLFML::LOWWI::Lowwi_ctx_t, std::shared_ptr<void>) {
-    if (g_running.exchange(true))
+static std::filesystem::path log_path() {
+    std::error_code ec;
+    return std::filesystem::temp_directory_path(ec) / "ultijarvis.log";
+}
+
+static void jlog(const std::string &msg) {
+    std::ofstream f(log_path(), std::ios::app);
+    if (!f.is_open())
         return;
+    std::time_t t = std::time(nullptr);
+    char stamp[32] = {0};
+    std::tm tm {};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    std::strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S", &tm);
+    f << stamp << "  " << msg << "\n";
+}
+
+void wakeword_callback(CLFML::LOWWI::Lowwi_ctx_t, std::shared_ptr<void>) {
+    jlog("wake word detected");
+    if (g_running.exchange(true)) {
+        jlog("app already running, ignoring");
+        return;
+    }
     std::thread([]() {
         try {
+            jlog("launching " + app_path().string());
             bp::child c(boost::filesystem::path(app_path().string()));
             c.wait();
+            jlog("app exited with " + std::to_string(c.exit_code()));
+        } catch (const std::exception &e) {
+            jlog(std::string("app launch failed: ") + e.what());
         } catch (...) {
+            jlog("app launch failed");
         }
         g_running.store(false);
     }).detach();
@@ -188,13 +218,18 @@ static void detach_from_terminal() {
 #endif
 }
 
-static void open_capture(ma_context *context, ma_device *device,
+static bool open_capture(ma_context *context, ma_device *device,
                          ma_device_config *config, ma_device_id *matched_id,
                          CLFML::LOWWI::Lowwi *runtime) {
     ma_device_info *captureInfos;
-    ma_uint32 captureCount;
-    ma_context_get_devices(context, nullptr, nullptr, &captureInfos,
-                           &captureCount);
+    ma_uint32 captureCount = 0;
+    ma_result gd = ma_context_get_devices(context, nullptr, nullptr,
+                                          &captureInfos, &captureCount);
+    std::string report = "capture devices: " + std::to_string(captureCount) +
+                         " (get_devices=" + std::to_string(int(gd)) + ")";
+    for (ma_uint32 i = 0; i < captureCount; i++)
+        report += "\n    device " + std::to_string(i) + ": " +
+                  captureInfos[i].name;
     *config = ma_device_config_init(ma_device_type_capture);
     (*config).capture.format = ma_format_f32;
     (*config).capture.channels = 1;
@@ -210,31 +245,60 @@ static void open_capture(ma_context *context, ma_device *device,
             break;
         }
     }
-    ma_device_init(context, config, device);
-    ma_device_start(device);
+    report += "\n    configured: " +
+              std::string(confdev.empty() ? "<default>" : confdev) +
+              ((*config).capture.pDeviceID ? " (matched)" : " (using default)");
+    ma_result ir = ma_device_init(context, config, device);
+    report += "\n    ma_device_init = " + std::to_string(int(ir));
+    ma_result sr = MA_ERROR;
+    if (ir == MA_SUCCESS) {
+        sr = ma_device_start(device);
+        report += "\n    ma_device_start = " + std::to_string(int(sr));
+        if (sr != MA_SUCCESS)
+            ma_device_uninit(device);
+    }
+    static std::string previous;
+    if (report != previous) {
+        previous = report;
+        jlog(report);
+    }
+    if (ir != MA_SUCCESS || sr != MA_SUCCESS)
+        return false;
     g_lastcallback.store(now_ms());
+    return true;
 }
 
 int main() {
     detach_from_terminal();
+    jlog("=== daemon start, exe=" + exe_dir().string() + " ===");
     std::filesystem::path lockfile = lock_path();
     {
         std::ofstream create(lockfile, std::ios::app);
-        if (!create.is_open())
+        if (!create.is_open()) {
+            jlog("cannot create lock file " + lockfile.string());
             return 0;
+        }
     }
     boost::interprocess::file_lock lock;
     try {
         lock = boost::interprocess::file_lock(lockfile.string().c_str());
+    } catch (const std::exception &e) {
+        jlog(std::string("file_lock failed: ") + e.what());
+        return 0;
     } catch (...) {
+        jlog("file_lock failed");
         return 0;
     }
-    if (!lock.try_lock())
+    if (!lock.try_lock()) {
+        jlog("another daemon already holds the lock, exiting");
         return 0;
+    }
     {
         std::ofstream f(pid_path(), std::ios::trunc);
         f << boost::this_process::get_id();
     }
+    jlog("lock acquired, pid " +
+         std::to_string(int(boost::this_process::get_id())));
 #ifdef _WIN32
     g_reloadevent =
         CreateEventW(nullptr, FALSE, FALSE, L"Local\\ultijarvis-reload");
@@ -243,6 +307,7 @@ int main() {
 #endif
     std::error_code ec;
     std::filesystem::current_path(exe_dir(), ec);
+    jlog("cwd = " + std::filesystem::current_path(ec).string());
     CLFML::LOWWI::Lowwi ww_runtime;
     CLFML::LOWWI::Lowwi_word_t ww;
     ww.cbfunc = wakeword_callback;
@@ -251,23 +316,45 @@ int main() {
     ww.refractory = 20;
     ww.model_path = "models/example_wakewords/hey_jarvis.onnx";
     ww.phrase = "Hey Jarvis";
-    ww_runtime.add_wakeword(ww);
+    jlog(std::string("wake word model present: ") +
+         (std::filesystem::exists(ww.model_path, ec) ? "yes" : "NO") + " (" +
+         std::filesystem::path(ww.model_path).string() + ")");
+    try {
+        ww_runtime.add_wakeword(ww);
+        jlog("wake word loaded");
+    } catch (const std::exception &e) {
+        jlog(std::string("add_wakeword threw: ") + e.what());
+        return 1;
+    } catch (...) {
+        jlog("add_wakeword threw");
+        return 1;
+    }
     ma_context context;
-    ma_context_init(nullptr, 0, nullptr, &context);
+    ma_result cr = ma_context_init(nullptr, 0, nullptr, &context);
+    jlog("ma_context_init = " + std::to_string(int(cr)));
     ma_device_id matched_id;
     ma_device device;
     ma_device_config config;
-    open_capture(&context, &device, &config, &matched_id, &ww_runtime);
+    bool open = open_capture(&context, &device, &config, &matched_id,
+                             &ww_runtime);
+    if (!open)
+        jlog("capture unavailable, will keep retrying");
 
     // Suspend/resume can silently kill the underlying capture without
     // firing an error, so watch the callback clock and reopen if it goes quiet
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(kPollSeconds));
-        bool stale = now_ms() - g_lastcallback.load() > kStaleMs;
-        if (!take_reload() && !stale)
+        bool stale = open && now_ms() - g_lastcallback.load() > kStaleMs;
+        if (!take_reload() && !stale && open)
             continue;
-        ma_device_stop(&device);
-        ma_device_uninit(&device);
-        open_capture(&context, &device, &config, &matched_id, &ww_runtime);
+        if (open) {
+            ma_device_stop(&device);
+            ma_device_uninit(&device);
+            open = false;
+        }
+        open = open_capture(&context, &device, &config, &matched_id,
+                            &ww_runtime);
+        if (open)
+            jlog("capture running");
     }
 }

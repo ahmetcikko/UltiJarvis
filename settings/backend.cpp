@@ -23,6 +23,8 @@
 
 #ifdef _WIN32
 #include <windows.h>
+
+#include <shellapi.h>
 #else
 #include <csignal>
 #include <sys/types.h>
@@ -42,6 +44,11 @@ static std::filesystem::path pid_path() {
 static std::filesystem::path lock_path() {
     std::error_code ec;
     return std::filesystem::temp_directory_path(ec) / "ultijarvis.lock";
+}
+
+static std::filesystem::path log_path() {
+    std::error_code ec;
+    return std::filesystem::temp_directory_path(ec) / "ultijarvis.log";
 }
 
 static int daemon_pid() {
@@ -362,17 +369,42 @@ void Settings::uninstall() {
     std::filesystem::remove_all(config_dir(), ec);
     std::filesystem::remove(pid_path(), ec);
     std::filesystem::remove(lock_path(), ec);
-#ifdef __linux__
+    std::filesystem::remove(log_path(), ec);
+    std::filesystem::path dir(
+        boost::dll::program_location().parent_path().string());
+#ifdef _WIN32
+    std::filesystem::path un = dir / "Uninstall.exe";
+    if (std::filesystem::exists(un, ec)) {
+        ShellExecuteW(nullptr, L"open", un.wstring().c_str(), nullptr,
+                      dir.wstring().c_str(), SW_SHOWNORMAL);
+    } else {
+        std::wstring args = L"/c timeout /t 3 /nobreak >nul & rmdir /s /q \"" +
+                            dir.wstring() + L"\"";
+        ShellExecuteW(nullptr, L"open", L"cmd.exe", args.c_str(), nullptr,
+                      SW_HIDE);
+    }
+#elif defined(__APPLE__)
+    std::filesystem::path bundle = dir.parent_path().parent_path();
+    if (bundle.extension() == ".app")
+        std::filesystem::remove_all(bundle, ec);
+    else
+        std::filesystem::remove_all(dir, ec);
+#else
+    bool packaged = false;
     try {
-        boost::filesystem::path exe = bp::search_path("pkexec");
-        if (!exe.empty()) {
+        boost::filesystem::path pk = bp::search_path("pkexec");
+        std::string d = dir.string();
+        if (!pk.empty() && d.rfind("/usr/", 0) == 0) {
             std::vector<std::string> args = {"apt-get", "purge", "-y",
                                              "ultijarvis"};
-            bp::child c(exe, args);
+            bp::child c(pk, args);
             c.detach();
+            packaged = true;
         }
     } catch (...) {
     }
+    if (!packaged)
+        std::filesystem::remove_all(dir, ec);
 #endif
     std::exit(0);
 }
