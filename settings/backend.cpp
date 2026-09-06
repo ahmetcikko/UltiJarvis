@@ -214,6 +214,40 @@ static void unregister_autostart() {
 #endif
 }
 
+static void restore_missing_files() {
+    std::filesystem::path dir(
+        boost::dll::program_location().parent_path().string());
+    std::filesystem::path backup = dir / "restore";
+    std::error_code ec;
+    if (!std::filesystem::is_directory(backup, ec))
+        return;
+    for (const std::filesystem::directory_entry &entry :
+         std::filesystem::recursive_directory_iterator(backup, ec)) {
+        if (!entry.is_regular_file(ec))
+            continue;
+        std::filesystem::path rel =
+            std::filesystem::relative(entry.path(), backup, ec);
+        if (ec || rel.empty())
+            continue;
+        std::filesystem::path live = dir / rel;
+        std::uintmax_t good = entry.file_size(ec);
+        if (ec)
+            continue;
+        std::error_code live_ec;
+        std::uintmax_t have = std::filesystem::file_size(live, live_ec);
+        if (!live_ec && have == good)
+            continue;
+        std::filesystem::create_directories(live.parent_path(), ec);
+        std::error_code copy_ec;
+        std::filesystem::copy_file(
+            entry.path(), live,
+            std::filesystem::copy_options::overwrite_existing, copy_ec);
+        jlog(copy_ec ? "could not restore " + rel.string() + ": " +
+                           copy_ec.message()
+                     : "restored " + rel.string());
+    }
+}
+
 static void start_daemon() {
     std::filesystem::path exe = daemon_path();
     std::error_code ec;
@@ -254,6 +288,7 @@ Settings::Settings(QObject *parent)
     for (int i = 0; i < m_devicenames.size(); i++)
         if (m_devicenames[i] == m_device)
             m_deviceindex = i;
+    restore_missing_files();
     register_autostart();
     start_daemon();
     emit changed();

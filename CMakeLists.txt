@@ -327,6 +327,17 @@ if(UNIX AND NOT APPLE)
 endif()
 install(FILES ${WHISPER_MODEL_PATH}
     DESTINATION ${JARVIS_INSTALL_DIR})
+if(ONNXRUNTIME_DLL)
+    install(FILES ${ONNXRUNTIME_DLL}
+        DESTINATION ${JARVIS_INSTALL_DIR}/restore)
+endif()
+install(FILES
+        ${CMAKE_SOURCE_DIR}/lib/Lowwi/models/melspectrogram.onnx
+        ${CMAKE_SOURCE_DIR}/lib/Lowwi/models/embedding_model.onnx
+    DESTINATION ${JARVIS_INSTALL_DIR}/restore/models)
+install(FILES
+        ${CMAKE_SOURCE_DIR}/lib/Lowwi/models/example_wakewords/hey_jarvis.onnx
+    DESTINATION ${JARVIS_INSTALL_DIR}/restore/models/example_wakewords)
 install(FILES ${CMAKE_SOURCE_DIR}/images/mic.svg
     DESTINATION ${JARVIS_INSTALL_DIR}
     RENAME ultijarvis.svg)
