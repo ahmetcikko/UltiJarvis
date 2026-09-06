@@ -285,7 +285,9 @@ jobs:
           : > /tmp/rpath_missing.txt
           find "$root" -type f | while IFS= read -r f; do
             file -b "$f" | grep -q 'Mach-O' || continue
+            self=$(otool -D "$f" 2>/dev/null | tail -n +2 | head -1)
             otool -L "$f" 2>/dev/null | tail -n +2 | awk '{print $1}' | while read -r dep; do
+              [ -n "$self" ] && [ "$dep" = "$self" ] && continue
               case "$dep" in
                 /usr/lib/*|/System/*) ;;
                 @rpath/*|@loader_path/*|@executable_path/*)
