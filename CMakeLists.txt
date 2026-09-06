@@ -290,6 +290,7 @@ if(ONNXRUNTIME_DLL)
 endif()
 foreach(lib IN ITEMS whisper ggml ggml-base ggml-cpu ggml-vulkan ggml-metal ggml-blas lowwi_lib)
     if(TARGET ${lib})
+        set_target_properties(${lib} PROPERTIES INSTALL_RPATH "${JARVIS_RPATH}")
         install(TARGETS ${lib}
             RUNTIME DESTINATION ${JARVIS_INSTALL_DIR}
             LIBRARY DESTINATION ${JARVIS_INSTALL_DIR} NAMELINK_SKIP
