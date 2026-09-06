@@ -15,6 +15,7 @@ Window {
     property string panel: ""
     property bool advInner: false
     property bool uninInner: false
+    Component.onCompleted: if (!settings.customkey) panel = "welcome"
     FontLoader {
         id: interFont
         source: "qrc:/fonts/Inter_18pt-Black.ttf"
@@ -182,10 +183,83 @@ Window {
                     width: parent.width
                     spacing: window.height * 0.02
                     Text {
-                        text: panel === "mic" ? qsTr("Select Microphone") : panel === "lang" ? qsTr("Select Language") : panel === "uninstall" ? qsTr("Uninstall") : panel === "daemon" ? qsTr("Manage Daemon") : qsTr("Advanced")
+                        text: panel === "welcome" ? qsTr("Get Started") : panel === "mic" ? qsTr("Select Microphone") : panel === "lang" ? qsTr("Select Language") : panel === "uninstall" ? qsTr("Uninstall") : panel === "daemon" ? qsTr("Manage Daemon") : qsTr("Advanced")
                         color: "#99ffffff"
                         font.family: jakartaFont.name
                         font.pixelSize: window.height * 0.03
+                    }
+                    Text {
+                        visible: panel === "welcome"
+                        width: panelColumn.width
+                        text: qsTr("Ulti Jarvis needs a free Groq API key to understand your voice commands. It only takes a minute to get one.")
+                        color: "#ffffff"
+                        font.family: jakartaFont.name
+                        font.pixelSize: window.height * 0.026
+                        wrapMode: Text.Wrap
+                    }
+                    Button {
+                        visible: panel === "welcome"
+                        width: panelColumn.width
+                        height: window.height * 0.09
+                        onClicked: Qt.openUrlExternally("https://console.groq.com/keys")
+                        background: Rectangle {
+                            radius: window.width * 0.02
+                            color: parent.pressed ? "#3357d98c" : "#1a57d98c"
+                            border.color: "#6657d98c"
+                            border.width: 1
+                            Behavior on color { ColorAnimation { duration: 100 } }
+                        }
+                        contentItem: Text {
+                            text: qsTr("Get a Free API Key")
+                            color: "#ffffff"
+                            font.family: jakartaFont.name
+                            font.pixelSize: window.height * 0.026
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                    Button {
+                        visible: panel === "welcome"
+                        width: panelColumn.width
+                        height: window.height * 0.09
+                        onClicked: {
+                            advInner = true
+                            panel = "adv"
+                        }
+                        background: Rectangle {
+                            radius: window.width * 0.02
+                            color: parent.pressed ? "#2effffff" : "#12ffffff"
+                            border.color: "#26ffffff"
+                            border.width: 1
+                            Behavior on color { ColorAnimation { duration: 100 } }
+                        }
+                        contentItem: Text {
+                            text: qsTr("I Already Have a Key")
+                            color: "#ffffff"
+                            font.family: jakartaFont.name
+                            font.pixelSize: window.height * 0.026
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                    }
+                    Button {
+                        visible: panel === "welcome"
+                        width: panelColumn.width
+                        height: window.height * 0.08
+                        onClicked: panel = ""
+                        background: Rectangle {
+                            radius: window.width * 0.02
+                            color: "transparent"
+                            Behavior on color { ColorAnimation { duration: 100 } }
+                        }
+                        contentItem: Text {
+                            text: qsTr("Not Now")
+                            color: "#77ffffff"
+                            font.family: jakartaFont.name
+                            font.pixelSize: window.height * 0.024
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
                     }
                     Repeater {
                         model: panel === "daemon" ? [["end", qsTr("End Current Process")], ["restart", qsTr("Restart Daemon")]] : []
