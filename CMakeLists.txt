@@ -67,20 +67,24 @@ FetchContent_Declare(
     SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/lib/Lowwi
     EXCLUDE_FROM_ALL
 )
-if(WIN32 AND NOT MSVC)
-    find_path(ONNXRUNTIME_INCLUDE_DIR onnxruntime_cxx_api.h PATH_SUFFIXES onnxruntime)
-    find_library(ONNXRUNTIME_IMPLIB NAMES onnxruntime)
-    find_file(ONNXRUNTIME_DLL NAMES onnxruntime.dll PATH_SUFFIXES bin)
-    if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_IMPLIB AND ONNXRUNTIME_DLL)
-        add_library(onnxruntime SHARED IMPORTED)
-        set_target_properties(onnxruntime PROPERTIES
-            IMPORTED_IMPLIB ${ONNXRUNTIME_IMPLIB}
-            IMPORTED_LOCATION ${ONNXRUNTIME_DLL}
-            INTERFACE_INCLUDE_DIRECTORIES ${ONNXRUNTIME_INCLUDE_DIR})
-    endif()
+set(JARVIS_ORT_VERSION 1.18.1)
+if(WIN32)
+    FetchContent_Declare(
+        onnxruntime_bin
+        URL https://github.com/microsoft/onnxruntime/releases/download/v${JARVIS_ORT_VERSION}/onnxruntime-win-x64-${JARVIS_ORT_VERSION}.zip
+        SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/lib/onnxruntime
+        EXCLUDE_FROM_ALL
+    )
+    FetchContent_MakeAvailable(onnxruntime_bin)
+    set(ONNXRUNTIME_DLL ${onnxruntime_bin_SOURCE_DIR}/lib/onnxruntime.dll)
+    set(ONNXRUNTIME_IMPLIB ${onnxruntime_bin_SOURCE_DIR}/lib/onnxruntime.lib)
+    add_library(onnxruntime SHARED IMPORTED)
+    set_target_properties(onnxruntime PROPERTIES
+        IMPORTED_IMPLIB ${ONNXRUNTIME_IMPLIB}
+        IMPORTED_LOCATION ${ONNXRUNTIME_DLL}
+        INTERFACE_INCLUDE_DIRECTORIES ${onnxruntime_bin_SOURCE_DIR}/include)
 endif()
 if(APPLE)
-    set(JARVIS_ORT_VERSION 1.18.1)
     FetchContent_Declare(
         onnxruntime_bin
         URL https://github.com/microsoft/onnxruntime/releases/download/v${JARVIS_ORT_VERSION}/onnxruntime-osx-universal2-${JARVIS_ORT_VERSION}.tgz
@@ -327,6 +331,30 @@ if(UNIX AND NOT APPLE)
 endif()
 install(FILES ${WHISPER_MODEL_PATH}
     DESTINATION ${JARVIS_INSTALL_DIR})
+if(WIN32)
+    set(JARVIS_MSVC_RUNTIME "")
+    set(JARVIS_SYSTEM_RUNTIME
+        MSVCP140.dll MSVCP140_1.dll VCRUNTIME140.dll VCRUNTIME140_1.dll)
+    if(GGML_VULKAN)
+        list(APPEND JARVIS_SYSTEM_RUNTIME vulkan-1.dll)
+    endif()
+    foreach(_crt IN LISTS JARVIS_SYSTEM_RUNTIME)
+        file(TO_CMAKE_PATH "$ENV{SystemRoot}/System32/${_crt}" _crt_path)
+        if(EXISTS "${_crt_path}")
+            list(APPEND JARVIS_MSVC_RUNTIME "${_crt_path}")
+        else()
+            message(FATAL_ERROR
+                "${_crt} was not found in System32. It is not part of Windows "
+                "and has to ship with the application, or the program will not "
+                "start on a machine that does not already have it.")
+        endif()
+    endforeach()
+    install(FILES ${JARVIS_MSVC_RUNTIME}
+        DESTINATION ${JARVIS_INSTALL_DIR})
+    install(FILES ${JARVIS_MSVC_RUNTIME}
+        DESTINATION ${JARVIS_INSTALL_DIR}/restore)
+endif()
+
 if(ONNXRUNTIME_DLL)
     install(FILES ${ONNXRUNTIME_DLL}
         DESTINATION ${JARVIS_INSTALL_DIR}/restore)
