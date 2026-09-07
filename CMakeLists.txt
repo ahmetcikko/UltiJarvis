@@ -43,6 +43,11 @@ if(APPLE)
     endif()
 endif()
 
+if(NOT EXISTS ${CMAKE_SOURCE_DIR}/app/apikey.h)
+    configure_file(${CMAKE_SOURCE_DIR}/app/apikey.h.example
+        ${CMAKE_SOURCE_DIR}/app/apikey.h COPYONLY)
+endif()
+
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Quick QuickControls2 LinguistTools)
 find_package(Threads REQUIRED)
 set(Boost_USE_STATIC_LIBS OFF)
