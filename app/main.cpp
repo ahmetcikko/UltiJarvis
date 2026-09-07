@@ -40,16 +40,25 @@ static void jlog(const std::string &msg) {
     f << stamp << "  app: " << msg << "\n";
 }
 
+static void show_fatal(const std::string &msg) {
+    jlog(msg);
+#ifdef _WIN32
+    std::wstring w(msg.begin(), msg.end());
+    MessageBoxW(nullptr, w.c_str(), L"Ulti Jarvis",
+                MB_OK | MB_ICONERROR | MB_SETFOREGROUND | MB_TOPMOST);
+#endif
+}
+
 static void on_terminate() {
     try {
         std::exception_ptr e = std::current_exception();
         if (e)
             std::rethrow_exception(e);
-        jlog("FATAL: terminate with no active exception");
+        show_fatal("Ulti Jarvis stopped: terminate with no active exception");
     } catch (const std::exception &ex) {
-        jlog(std::string("FATAL: unhandled exception: ") + ex.what());
+        show_fatal(std::string("Ulti Jarvis stopped: ") + ex.what());
     } catch (...) {
-        jlog("FATAL: unhandled exception of unknown type");
+        show_fatal("Ulti Jarvis stopped: unhandled exception");
     }
     std::_Exit(1);
 }
@@ -61,7 +70,7 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *info) {
                   static_cast<unsigned long>(
                       info->ExceptionRecord->ExceptionCode),
                   info->ExceptionRecord->ExceptionAddress);
-    jlog(buf);
+    show_fatal(buf);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #endif
@@ -93,7 +102,9 @@ int main(int argc, char *argv[]) {
     (*engine.rootContext()).setContextProperty("backend", &backend);
     engine.load(QUrl("qrc:/app/main.qml"));
     if (engine.rootObjects().isEmpty()) {
-        jlog("FATAL: qml failed to load");
+        show_fatal(std::string("Ulti Jarvis could not create its window. "
+                               "Graphics backend: ") +
+                   (opengl ? "OpenGL" : "software"));
         return 1;
     }
     jlog("qml loaded, entering event loop");
