@@ -276,6 +276,35 @@ static void restore_missing_files(bool elevated = false) {
         repair_elevated();
 }
 
+#ifdef _WIN32
+static void probe_runtime() {
+    std::filesystem::path dir(
+        boost::dll::program_location().parent_path().string());
+    const wchar_t *names[] = {L"onnxruntime.dll", L"libonnx.dll",
+                              L"libprotobuf-lite.dll", L"libre2-11.dll",
+                              L"libstdc++-6.dll", L"libgcc_s_seh-1.dll",
+                              L"libwinpthread-1.dll"};
+    for (const wchar_t *name : names) {
+        std::filesystem::path dll = dir / name;
+        std::error_code ec;
+        if (!std::filesystem::exists(dll, ec)) {
+            jlog("probe: missing " + dll.filename().string());
+            continue;
+        }
+        HMODULE h = LoadLibraryExW(dll.wstring().c_str(), nullptr,
+                                   LOAD_WITH_ALTERED_SEARCH_PATH);
+        if (h) {
+            FreeLibrary(h);
+            continue;
+        }
+        jlog("probe: " + dll.filename().string() + " failed to load, error " +
+             std::to_string(GetLastError()));
+    }
+}
+#else
+static void probe_runtime() {}
+#endif
+
 void jarvis_repair_install() { restore_missing_files(true); }
 
 static void start_daemon() {
@@ -319,6 +348,7 @@ Settings::Settings(QObject *parent)
         if (m_devicenames[i] == m_device)
             m_deviceindex = i;
     restore_missing_files();
+    probe_runtime();
     register_autostart();
     start_daemon();
     emit changed();
