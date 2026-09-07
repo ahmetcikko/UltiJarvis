@@ -12,6 +12,7 @@ class Settings : public QObject {
     Q_PROPERTY(QString language MEMBER m_language NOTIFY changed)
     Q_PROPERTY(int deviceindex MEMBER m_deviceindex NOTIFY changed)
     Q_PROPERTY(bool customkey MEMBER m_customkey NOTIFY changed)
+    Q_PROPERTY(bool haskey MEMBER m_haskey NOTIFY changed)
 
   public:
     explicit Settings(QObject *parent = nullptr);
@@ -40,6 +41,7 @@ class Settings : public QObject {
     QString m_apikey;
     int m_deviceindex;
     bool m_customkey;
+    bool m_haskey;
     ma_context m_context;
     ma_device_info *m_captureinfos;
     ma_uint32 m_capturecount;

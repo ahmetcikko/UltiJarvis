@@ -15,7 +15,7 @@ Window {
     property string panel: ""
     property bool advInner: false
     property bool uninInner: false
-    Component.onCompleted: if (!settings.customkey) panel = "welcome"
+    Component.onCompleted: if (!settings.haskey) panel = "welcome"
     FontLoader {
         id: interFont
         source: "qrc:/fonts/Inter_18pt-Black.ttf"

@@ -1,5 +1,6 @@
 #define MINIAUDIO_IMPLEMENTATION
 #include "backend.h"
+#include "apikey.h"
 #include <QDebug>
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <boost/version.hpp>
@@ -329,7 +330,7 @@ static void start_daemon() {
 }
 
 Settings::Settings(QObject *parent)
-    : QObject(parent), m_language("en"), m_deviceindex(0), m_customkey(false),
+    : QObject(parent), m_language("en"), m_deviceindex(0), m_customkey(false), m_haskey(false),
       m_captureinfos(nullptr), m_capturecount(0) {
     if (ma_context_init(nullptr, 0, nullptr, &(*this).m_context) !=
         MA_SUCCESS) {
@@ -392,6 +393,7 @@ void Settings::load() {
             m_apikey = value;
     }
     m_customkey = !m_apikey.isEmpty();
+    m_haskey = m_customkey || kDefaultApiKey[0] != '\0';
 }
 
 void Settings::save() {
@@ -479,12 +481,14 @@ void Settings::set_apikey(const QString &key) {
     }
     m_apikey = trimmed;
     m_customkey = true;
+    m_haskey = true;
     save();
 }
 
 void Settings::reset_apikey() {
     m_apikey.clear();
     m_customkey = false;
+    m_haskey = kDefaultApiKey[0] != '\0';
     save();
 }
 

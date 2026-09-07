@@ -191,7 +191,8 @@ target_include_directories(UltiJarvis PRIVATE
     ${WEBRTC_APM_INCLUDE_DIRS}
 )
 target_include_directories(JarvisDaemon PRIVATE ${CMAKE_SOURCE_DIR}/lib/miniaudio)
-target_include_directories(JarvisSettings PRIVATE ${CMAKE_SOURCE_DIR}/lib/miniaudio)
+target_include_directories(JarvisSettings PRIVATE ${CMAKE_SOURCE_DIR}/lib/miniaudio
+    ${CMAKE_SOURCE_DIR}/app)
 target_link_libraries(UltiJarvis PRIVATE
     Qt6::Core
     Qt6::Gui
