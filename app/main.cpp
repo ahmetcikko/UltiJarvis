@@ -2,7 +2,10 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QOffscreenSurface>
+#include <QOpenGLContext>
 #include <QQuickWindow>
+#include <QSurfaceFormat>
 #include <QUrl>
 #include <cstdio>
 #include <cstdlib>
@@ -69,9 +72,21 @@ int main(int argc, char *argv[]) {
     SetUnhandledExceptionFilter(crash_filter);
 #endif
     jlog("=== app start ===");
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGL);
     QGuiApplication app(argc, argv);
     jlog("qt application created");
+    bool opengl = false;
+    {
+        QOpenGLContext probe;
+        QOffscreenSurface surface;
+        surface.create();
+        if (probe.create() && surface.isValid() && probe.makeCurrent(&surface)) {
+            opengl = true;
+            probe.doneCurrent();
+        }
+    }
+    QQuickWindow::setGraphicsApi(opengl ? QSGRendererInterface::OpenGL
+                                        : QSGRendererInterface::Software);
+    jlog(opengl ? "graphics: OpenGL" : "graphics: software (no usable OpenGL)");
     Backend backend;
     jlog("backend created");
     QQmlApplicationEngine engine;
