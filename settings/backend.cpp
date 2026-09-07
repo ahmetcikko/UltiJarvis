@@ -214,7 +214,30 @@ static void unregister_autostart() {
 #endif
 }
 
-static void restore_missing_files() {
+#ifdef _WIN32
+static void repair_elevated() {
+    std::wstring self = boost::dll::program_location().wstring();
+    SHELLEXECUTEINFOW info {};
+    info.cbSize = sizeof(info);
+    info.fMask = SEE_MASK_NOCLOSEPROCESS;
+    info.lpVerb = L"runas";
+    info.lpFile = self.c_str();
+    info.lpParameters = L"--repair";
+    info.nShow = SW_HIDE;
+    if (!ShellExecuteExW(&info) || !info.hProcess) {
+        jlog("elevated repair was declined or failed to start");
+        return;
+    }
+    WaitForSingleObject(info.hProcess, 120000);
+    CloseHandle(info.hProcess);
+    jlog("elevated repair finished");
+}
+#else
+static void repair_elevated() {}
+#endif
+
+static void restore_missing_files(bool elevated = false) {
+    bool denied = false;
     std::filesystem::path dir(
         boost::dll::program_location().parent_path().string());
     std::filesystem::path backup = dir / "restore";
@@ -242,11 +265,18 @@ static void restore_missing_files() {
         std::filesystem::copy_file(
             entry.path(), live,
             std::filesystem::copy_options::overwrite_existing, copy_ec);
-        jlog(copy_ec ? "could not restore " + rel.string() + ": " +
-                           copy_ec.message()
-                     : "restored " + rel.string());
+        if (!copy_ec) {
+            jlog("restored " + rel.string());
+            continue;
+        }
+        jlog("could not restore " + rel.string() + ": " + copy_ec.message());
+        denied = true;
     }
+    if (denied && !elevated)
+        repair_elevated();
 }
+
+void jarvis_repair_install() { restore_missing_files(true); }
 
 static void start_daemon() {
     std::filesystem::path exe = daemon_path();

@@ -44,3 +44,5 @@ class Settings : public QObject {
     ma_device_info *m_captureinfos;
     ma_uint32 m_capturecount;
 };
+
+void jarvis_repair_install();
