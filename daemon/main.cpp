@@ -211,10 +211,7 @@ static void on_hup(int) { g_reload = 1; }
 static void detach_from_terminal() {
 #ifndef _WIN32
 #if defined(NDEBUG) && !defined(__APPLE__)
-    // IMPORTANT: DAEMON WONT WORK CONTINUOUSLY IN DEBUG MODE,
-    // SET CMAKE TO RELEASE BEFORE BUILDING.
-    // Not on macOS: launchd KeepAlive requires the process to stay in the
-    // foreground, and forking makes it respawn forever.
+
     if (fork() > 0)
         _exit(0);
     setsid();
@@ -373,8 +370,6 @@ int main() {
     if (!open)
         jlog("capture unavailable, will keep retrying");
 
-    // Suspend/resume can silently kill the underlying capture without
-    // firing an error, so watch the callback clock and reopen if it goes quiet
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(kPollSeconds));
         bool stale = open && now_ms() - g_lastcallback.load() > kStaleMs;

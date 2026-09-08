@@ -110,5 +110,10 @@ int main(int argc, char *argv[]) {
     jlog("qml loaded, entering event loop");
     int rc = app.exec();
     jlog("event loop finished with " + std::to_string(rc));
+#ifdef __APPLE__
+
+    std::fflush(nullptr);
+    std::_Exit(rc);
+#endif
     return rc;
 }

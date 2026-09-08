@@ -49,4 +49,4 @@ bool spawn(const QStringList &args) {
     return true;
 }
 
-} // namespace platform
+}

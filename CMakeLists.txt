@@ -1,4 +1,12 @@
 cmake_minimum_required(VERSION 3.30...4.3)
+if(CMAKE_HOST_APPLE)
+
+    set(JARVIS_MACOS_MIN "14.0" CACHE STRING
+        "Oldest macOS release the build targets")
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "${JARVIS_MACOS_MIN}")
+    endif()
+endif()
 project(UltiJarvis VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,6 +18,8 @@ endif()
 if(APPLE)
     set(JARVIS_BUNDLE_NAME "Ulti Jarvis.app")
     set(JARVIS_INSTALL_DIR "${JARVIS_BUNDLE_NAME}/Contents/MacOS")
+
+    set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME "UltiJarvis")
 else()
     set(JARVIS_INSTALL_DIR ".")
 endif()
@@ -132,6 +142,21 @@ set(WHISPER_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(WHISPER_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GGML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(whisper)
+if(APPLE)
+
+    function(jarvis_force_include target dir src header)
+        if(NOT TARGET ${target})
+            return()
+        endif()
+        set_source_files_properties(${dir}/${src} DIRECTORY ${dir}
+            PROPERTIES COMPILE_OPTIONS "-include;${header}")
+    endfunction()
+    jarvis_force_include(ggml-base ${CMAKE_SOURCE_DIR}/lib/whisper/ggml/src
+        gguf.cpp cerrno)
+    jarvis_force_include(ggml-metal
+        ${CMAKE_SOURCE_DIR}/lib/whisper/ggml/src/ggml-metal
+        ggml-metal.cpp memory)
+endif()
 if(WIN32)
     set(JARVIS_PLATFORM_SRC app/platform_windows.cpp)
 elseif(APPLE)
@@ -387,10 +412,19 @@ install(DIRECTORY ${CMAKE_SOURCE_DIR}/lib/Lowwi/models
 install(DIRECTORY ${CMAKE_SOURCE_DIR}/sounds
     DESTINATION ${JARVIS_INSTALL_DIR})
 if(APPLE)
+
+    configure_file(${CMAKE_SOURCE_DIR}/cmake/macos_layout.cmake.in
+        ${CMAKE_BINARY_DIR}/macos_layout.cmake @ONLY)
+    install(SCRIPT ${CMAKE_BINARY_DIR}/macos_layout.cmake)
+endif()
+
+if(APPLE)
     configure_file(${CMAKE_SOURCE_DIR}/cmake/Info.plist.in
         ${CMAKE_BINARY_DIR}/Info.plist @ONLY)
     install(FILES ${CMAKE_BINARY_DIR}/Info.plist
         DESTINATION "${JARVIS_BUNDLE_NAME}/Contents")
+    install(FILES ${CMAKE_SOURCE_DIR}/images/UltiJarvis.icns
+        DESTINATION "${JARVIS_BUNDLE_NAME}/Contents/Resources")
 endif()
 
 if(WIN32 OR APPLE)
@@ -466,10 +500,12 @@ if(APPLE AND JARVIS_DEPLOY_QT)
                 execute_process(COMMAND install_name_tool -id \"@rpath/\${_name}\"
                     \"\${_lib}\" ERROR_QUIET)
             endforeach()
+
             execute_process(
                 COMMAND \"${MACDEPLOYQT_EXECUTABLE}\" \"\${_bundle}\"
                     \"-executable=\${_macos}/Ulti-Jarvis-Daemon\"
                     \"-executable=\${_macos}/Ulti-Jarvis-Settings\"
+                    \"-executable=\${_macos}/Ulti Jarvis\"
                     \"-qmldir=${CMAKE_CURRENT_SOURCE_DIR}\"
                 RESULT_VARIABLE _macdeployqt_result
             )
@@ -482,6 +518,40 @@ if(APPLE AND JARVIS_DEPLOY_QT)
         message(WARNING
             "macdeployqt was not found; the macOS package will link against "
             "Homebrew and will not run on another Mac")
+    endif()
+endif()
+
+if(APPLE)
+    find_program(JARVIS_VTOOL vtool)
+    find_program(JARVIS_OTOOL otool)
+    find_program(JARVIS_INSTALL_NAME_TOOL install_name_tool)
+    if(JARVIS_VTOOL AND JARVIS_OTOOL AND JARVIS_INSTALL_NAME_TOOL)
+        configure_file(${CMAKE_SOURCE_DIR}/cmake/macos_binaries.cmake.in
+            ${CMAKE_BINARY_DIR}/macos_binaries.cmake @ONLY)
+        install(SCRIPT ${CMAKE_BINARY_DIR}/macos_binaries.cmake)
+    else()
+        message(WARNING
+            "vtool was not found; bundled libraries will keep the build "
+            "machine's macOS minimum")
+    endif()
+endif()
+
+if(APPLE)
+
+    set(JARVIS_CODESIGN_IDENTITY "-" CACHE STRING
+        "codesign identity for the macOS bundle, or - for an ad-hoc signature")
+    set(JARVIS_NOTARIZE_PROFILE "" CACHE STRING
+        "notarytool keychain profile; set with a Developer ID to notarise")
+    find_program(JARVIS_CODESIGN codesign)
+    if(JARVIS_CODESIGN)
+        configure_file(${CMAKE_SOURCE_DIR}/cmake/codesign.cmake.in
+            ${CMAKE_BINARY_DIR}/codesign.cmake @ONLY)
+
+        install(SCRIPT ${CMAKE_BINARY_DIR}/codesign.cmake)
+    else()
+        message(WARNING
+            "codesign was not found; the bundle will keep the ad-hoc signature "
+            "the linker wrote, which Gatekeeper rejects")
     endif()
 endif()
 
@@ -509,7 +579,45 @@ if(WIN32)
         message(STATUS "makensis not found - installer generator disabled")
     endif()
 elseif(APPLE)
-    set(CPACK_GENERATOR "TGZ")
+
+    set(CPACK_GENERATOR "productbuild")
+    set(CPACK_PACKAGING_INSTALL_PREFIX "/Applications")
+    set(CPACK_COMPONENTS_ALL UltiJarvis)
+    set(CPACK_PRODUCTBUILD_IDENTIFIER "com.ultijarvis.UltiJarvis")
+
+    file(WRITE ${CMAKE_BINARY_DIR}/packaging/postinstall
+[=[#!/bin/sh
+
+uid=$(/usr/bin/stat -f %u /dev/console 2>/dev/null) || exit 0
+[ -n "$uid" ] && [ "$uid" -gt 0 ] || exit 0
+
+tmp=$(/usr/bin/sudo -u "#$uid" /usr/bin/getconf DARWIN_USER_TEMP_DIR 2>/dev/null)
+if [ -n "$tmp" ]; then
+    TMPDIR="$tmp"
+    export TMPDIR
+else
+    unset TMPDIR
+fi
+
+/bin/launchctl asuser "$uid" /usr/bin/sudo -u "#$uid" \
+    /usr/bin/open "/Applications/Ulti Jarvis.app" || true
+exit 0
+]=])
+    file(CHMOD ${CMAKE_BINARY_DIR}/packaging/postinstall
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ
+                    GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+    set(CPACK_POSTFLIGHT_ULTIJARVIS_SCRIPT
+        ${CMAKE_BINARY_DIR}/packaging/postinstall)
+
+    find_program(JARVIS_PKGUTIL pkgutil)
+    if(JARVIS_PKGUTIL)
+        configure_file(${CMAKE_SOURCE_DIR}/cmake/macos_pkg.cmake.in
+            ${CMAKE_BINARY_DIR}/macos_pkg.cmake @ONLY)
+        set(CPACK_POST_BUILD_SCRIPTS ${CMAKE_BINARY_DIR}/macos_pkg.cmake)
+    else()
+        message(WARNING
+            "pkgutil was not found; the installer will ask for Rosetta")
+    endif()
 else()
     set(CPACK_GENERATOR "TGZ;DEB")
     file(WRITE ${CMAKE_BINARY_DIR}/packaging/postinst

@@ -1,0 +1,79 @@
+
+set(_codesign "@JARVIS_CODESIGN@")
+set(_identity "@JARVIS_CODESIGN_IDENTITY@")
+set(_entitlements "@CMAKE_SOURCE_DIR@/cmake/UltiJarvis.entitlements")
+set(_bundle "${CMAKE_INSTALL_PREFIX}/@JARVIS_BUNDLE_NAME@")
+
+if(NOT EXISTS "${_bundle}")
+    message(FATAL_ERROR "codesign: ${_bundle} was not installed")
+endif()
+
+set(_flags --force --sign "${_identity}")
+if(_identity STREQUAL "-")
+
+    list(APPEND _flags --timestamp=none)
+else()
+    list(APPEND _flags --timestamp --options runtime)
+endif()
+
+function(jarvis_sign path)
+    execute_process(COMMAND "${_codesign}" ${_flags} ${ARGN} "${path}"
+        RESULT_VARIABLE _res ERROR_VARIABLE _err)
+    if(NOT _res EQUAL 0)
+        message(FATAL_ERROR "codesign failed on ${path}:\n${_err}")
+    endif()
+endfunction()
+
+file(GLOB_RECURSE _libs "${_bundle}/*.dylib" "${_bundle}/*.so")
+foreach(_lib IN LISTS _libs)
+    jarvis_sign("${_lib}")
+endforeach()
+file(GLOB _frameworks "${_bundle}/Contents/Frameworks/*.framework")
+foreach(_framework IN LISTS _frameworks)
+    jarvis_sign("${_framework}")
+endforeach()
+
+foreach(_helper "Ulti-Jarvis-Daemon" "Ulti-Jarvis-Settings")
+    if(EXISTS "${_bundle}/Contents/MacOS/${_helper}")
+        jarvis_sign("${_bundle}/Contents/MacOS/${_helper}"
+            --entitlements "${_entitlements}")
+    endif()
+endforeach()
+jarvis_sign("${_bundle}" --entitlements "${_entitlements}")
+
+execute_process(COMMAND "${_codesign}" --verify --strict --deep "${_bundle}"
+    RESULT_VARIABLE _verify ERROR_VARIABLE _verify_err)
+if(NOT _verify EQUAL 0)
+    message(FATAL_ERROR "the signed bundle does not verify:\n${_verify_err}")
+endif()
+message(STATUS "Signed ${_bundle} with identity ${_identity}")
+
+set(_profile "@JARVIS_NOTARIZE_PROFILE@")
+if(_profile AND NOT _identity STREQUAL "-")
+    set(_zip "${CMAKE_INSTALL_PREFIX}/notarize.zip")
+    execute_process(COMMAND ditto -c -k --keepParent "${_bundle}" "${_zip}"
+        RESULT_VARIABLE _res)
+    if(NOT _res EQUAL 0)
+        message(FATAL_ERROR "could not archive the bundle for notarising")
+    endif()
+    message(STATUS "Submitting ${_bundle} to notarisation, this waits on Apple")
+    execute_process(
+        COMMAND xcrun notarytool submit "${_zip}"
+                --keychain-profile "${_profile}" --wait
+        RESULT_VARIABLE _res)
+    file(REMOVE "${_zip}")
+    if(NOT _res EQUAL 0)
+        message(FATAL_ERROR "notarisation failed; run notarytool log for detail")
+    endif()
+    execute_process(COMMAND xcrun stapler staple "${_bundle}"
+        RESULT_VARIABLE _res)
+    if(NOT _res EQUAL 0)
+        message(FATAL_ERROR "could not staple the notarisation ticket")
+    endif()
+    message(STATUS "Notarised and stapled ${_bundle}")
+elseif(_identity STREQUAL "-")
+    message(STATUS
+        "Signed ad-hoc: valid, but a machine that downloads this will still "
+        "quarantine it. Set JARVIS_CODESIGN_IDENTITY to a Developer ID and "
+        "JARVIS_NOTARIZE_PROFILE to a notarytool profile to clear that.")
+endif()

@@ -316,8 +316,6 @@ static bool is_critical_comm(const QString &comm) {
                                                   "Ulti-Jarvis-Daemon",
                                                   "Ulti-Jarvis-Settings"};
 
-    // /proc truncates comm to 15 chars, so long names need the truncated
-    // compare too
     for (const QString &name : critical)
         if (comm.compare(name, Qt::CaseInsensitive) == 0 ||
             comm.compare(name.left(15), Qt::CaseInsensitive) == 0)
@@ -617,9 +615,6 @@ void Backend::dispatch(const QString &content) {
         obj = QJsonDocument::fromJson(raw.mid(a, b - a + 1).toUtf8()).object();
     QString action = obj["action"].toString();
 
-    // m_stage tracks whether this reply is the initial intent routing or a
-    // follow-up pick from a specific app/process list, since both go through
-    // the same dispatch path
     if (m_stage == "route" && action == "open_app") {
         m_stage = "open";
         send_llm(QString(kPromptOpenA) + m_applist + kPromptOpenB, m_input);

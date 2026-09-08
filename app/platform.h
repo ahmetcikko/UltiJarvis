@@ -31,4 +31,4 @@ bool step_volume(int delta);
 bool set_volume(int level);
 bool system_power(const QString &action);
 
-} // namespace platform
+}

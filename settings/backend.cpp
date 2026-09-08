@@ -32,6 +32,10 @@
 #include <sys/types.h>
 #endif
 
+#ifdef __APPLE__
+#include <unistd.h>
+#endif
+
 #if BOOST_VERSION >= 108600
 namespace bp = boost::process::v1;
 #else
@@ -409,7 +413,6 @@ void Settings::save() {
         f << "apikey=" << m_apikey.toStdString() << "\n";
     f.close();
 
-    // config file holds the api key in plaintext, so lock it down to owner-only
     std::filesystem::permissions(path,
                                  std::filesystem::perms::owner_read |
                                      std::filesystem::perms::owner_write,
@@ -431,6 +434,30 @@ void Settings::signal_daemon() {
         kill(pid_t(pid), SIGHUP);
 #endif
 }
+
+#ifdef __APPLE__
+
+static void remove_matching(const std::filesystem::path &dir,
+                            const std::string &prefix) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec))
+        return;
+    for (const std::filesystem::directory_entry &entry :
+         std::filesystem::directory_iterator(dir, ec)) {
+        std::string name = entry.path().filename().string();
+        if (name.rfind(prefix, 0) == 0)
+            std::filesystem::remove_all(entry.path(), ec);
+    }
+}
+
+static std::filesystem::path darwin_cache_dir() {
+    char buf[1024] = {0};
+    std::size_t n = confstr(_CS_DARWIN_USER_CACHE_DIR, buf, sizeof(buf));
+    if (n == 0 || n > sizeof(buf))
+        return {};
+    return std::filesystem::path(buf);
+}
+#endif
 
 static void stop_daemon() {
     int pid = daemon_pid();
@@ -515,10 +542,42 @@ void Settings::uninstall() {
     }
 #elif defined(__APPLE__)
     std::filesystem::path bundle = dir.parent_path().parent_path();
-    if (bundle.extension() == ".app")
-        std::filesystem::remove_all(bundle, ec);
-    else
-        std::filesystem::remove_all(dir, ec);
+    if (bundle.extension() != ".app")
+        bundle = dir;
+
+    run_tool("pkill", {"-f", (dir / "Ulti Jarvis").string()});
+
+    std::filesystem::path home(getenv("HOME") ? getenv("HOME") : "");
+    remove_matching(home / "Library" / "Caches", "Ulti Jarvis");
+    remove_matching(home / "Library" / "Saved Application State",
+                    "com.ultijarvis.");
+    remove_matching(home / "Library" / "Preferences", "com.ultijarvis.");
+    remove_matching(home / "Library" / "Application Support" / "CrashReporter",
+                    "Ulti Jarvis");
+    remove_matching(home / "Library" / "Logs" / "DiagnosticReports",
+                    "Ulti Jarvis");
+    std::filesystem::path cache = darwin_cache_dir();
+    if (!cache.empty())
+        std::filesystem::remove_all(cache / "com.ultijarvis.UltiJarvis", ec);
+
+    run_tool("/System/Library/Frameworks/CoreServices.framework/Frameworks/"
+             "LaunchServices.framework/Support/lsregister",
+             {"-u", bundle.string()});
+
+    std::filesystem::remove_all(bundle, ec);
+
+    if (std::filesystem::exists(bundle, ec)) {
+        std::string command =
+            "rm -rf '" + bundle.string() +
+            "'; for p in $(/usr/sbin/pkgutil --pkgs | /usr/bin/grep -i "
+            "ultijarvis); do /usr/sbin/pkgutil --forget $p; done";
+        run_tool("osascript",
+                 {"-e", "do shell script \"" + command +
+                            "\" with administrator privileges"});
+        if (std::filesystem::exists(bundle, ec))
+            jlog("the application could not be removed from " +
+                 bundle.string());
+    }
 #else
     bool packaged = false;
     try {

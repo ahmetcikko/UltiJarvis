@@ -61,8 +61,6 @@ int parent_pid(int pid) {
         return 0;
     int ppid = 0;
 
-    // comm can itself contain spaces/parens, so parse from the last ')' not the
-    // first
     if (std::sscanf(content.c_str() + p + 1, " %*c %d", &ppid) != 1)
         return 0;
     return ppid;
@@ -80,8 +78,7 @@ bool is_system_path(const std::string &path) {
 }
 
 static std::string cgroup_path(const std::string &line) {
-    // cgroup v1 lines are "N:controller:path", v2 is "0::path" - skip past both
-    // colons either way
+
     size_t first = line.find(':');
     if (first == std::string::npos)
         return line;
@@ -101,8 +98,7 @@ static bool in_app_slice(int pid) {
 }
 
 bool is_shielded(int pid, bool own_lineage) {
-    // only shield our own process tree from itself when it's not a real desktop
-    // app, otherwise a terminal that launched us would become unkillable
+
     if (own_lineage && !in_app_slice(pid))
         return true;
     std::ifstream f("/proc/" + std::to_string(pid) + "/cgroup");
@@ -192,4 +188,4 @@ bool system_power(const QString &action) {
     return spawn({"systemctl", "suspend"});
 }
 
-} // namespace platform
+}

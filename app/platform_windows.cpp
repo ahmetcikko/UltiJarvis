@@ -186,4 +186,4 @@ bool system_power(const QString &action) {
     return spawn({"rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"});
 }
 
-} // namespace platform
+}

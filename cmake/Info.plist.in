@@ -4,8 +4,11 @@
 <dict>
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
+
     <key>CFBundleExecutable</key>
-    <string>Ulti Jarvis</string>
+    <string>Ulti-Jarvis-Settings</string>
+    <key>CFBundleIconFile</key>
+    <string>UltiJarvis</string>
     <key>CFBundleIdentifier</key>
     <string>com.ultijarvis.UltiJarvis</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -21,7 +24,7 @@
     <key>CFBundleVersion</key>
     <string>@PROJECT_VERSION@</string>
     <key>LSMinimumSystemVersion</key>
-    <string>11.0</string>
+    <string>@JARVIS_MACOS_MIN@</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>

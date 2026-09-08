@@ -1,7 +1,5 @@
 #!/bin/sh
-# Installs the system dependencies needed to build Ulti Jarvis from source.
-# Everything else (miniaudio, Lowwi, whisper.cpp, the speech model) is fetched
-# automatically by CMake at configure time.
+
 set -e
 
 WEBRTC_REPO=https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing.git
@@ -11,10 +9,6 @@ have_apm() {
     pkg-config --exists webrtc-audio-processing-1
 }
 
-# Several distributions either have no webrtc-audio-processing 1.x package
-# (Ubuntu 24.04 ships only 0.3) or have moved on to 2.x, whose pkg-config name
-# does not match. Homebrew has no formula at all. Build the upstream release
-# that provides webrtc-audio-processing-1 in those cases.
 build_webrtc() {
     prefix=$1
     as_root=$2
@@ -56,9 +50,7 @@ if [ "$(uname)" = "Darwin" ]; then
         exit 1
     }
     brew install cmake ninja pkgconf qt boost abseil meson
-    # abseil comes from Homebrew so the build resolves it through pkg-config
-    # rather than vendoring its own copy, whose install_headers step would
-    # overwrite the abseil headers already in the Homebrew prefix.
+
     if ! have_apm; then
         build_webrtc "$(brew --prefix)" ""
     fi
@@ -93,8 +85,7 @@ if command -v apt-get >/dev/null 2>&1; then
         qt6-base-dev qt6-declarative-dev qt6-tools-dev qt6-tools-dev-tools \
         libboost-filesystem-dev \
         libvulkan-dev glslc spirv-headers
-    # Debian ships 1.x as libwebrtc-audio-processing-dev from trixie onward;
-    # Ubuntu uses the -1- infix where it has 1.x at all.
+
     PICK_QUERY="apt-cache show"
     apm=$(pick libwebrtc-audio-processing-1-dev libwebrtc-audio-processing-dev) || apm=
     if [ -n "$apm" ]; then

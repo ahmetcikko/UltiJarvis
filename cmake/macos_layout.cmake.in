@@ -1,0 +1,33 @@
+
+set(_macos "${CMAKE_INSTALL_PREFIX}/@JARVIS_INSTALL_DIR@")
+set(_res "${CMAKE_INSTALL_PREFIX}/@JARVIS_BUNDLE_NAME@/Contents/Resources")
+
+if(NOT IS_DIRECTORY "${_macos}")
+    message(FATAL_ERROR "the bundle has no ${_macos} to lay out")
+endif()
+file(MAKE_DIRECTORY "${_res}")
+
+file(GLOB _entries "${_macos}/*")
+set(_moved "")
+foreach(_entry IN LISTS _entries)
+    get_filename_component(_name "${_entry}" NAME)
+
+    if(IS_SYMLINK "${_entry}")
+        continue()
+    endif()
+
+    file(READ "${_entry}" _magic HEX LIMIT 4)
+
+    if(_magic MATCHES "^(cefaedfe|cffaedfe|cafebabe|cafebabf|bebafeca)$")
+        continue()
+    endif()
+    file(REMOVE_RECURSE "${_res}/${_name}")
+    file(RENAME "${_entry}" "${_res}/${_name}")
+    file(CREATE_LINK "../Resources/${_name}" "${_entry}" SYMBOLIC)
+    list(APPEND _moved "${_name}")
+endforeach()
+
+if(_moved)
+    list(JOIN _moved " " _joined)
+    message(STATUS "Moved out of Contents/MacOS so the bundle can be sealed: ${_joined}")
+endif()

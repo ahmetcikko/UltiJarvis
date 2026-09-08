@@ -131,4 +131,4 @@ bool system_power(const QString &action) {
         {"osascript", "-e", "tell application \"System Events\" to sleep"});
 }
 
-} // namespace platform
+}
