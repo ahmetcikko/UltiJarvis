@@ -1,0 +1,27 @@
+if(POLICY CMP0207)
+    cmake_policy(SET CMP0207 NEW)
+endif()
+set(jarvis_dest "${CMAKE_INSTALL_PREFIX}/@JARVIS_INSTALL_DIR@")
+set(jarvis_root "$ENV{DESTDIR}${jarvis_dest}")
+file(GLOB_RECURSE jarvis_plugins
+    "${jarvis_root}/plugins/*.so"
+    "${jarvis_root}/qml/*.so")
+if(NOT jarvis_plugins)
+    message(WARNING "no bundled Qt plugins were found under ${jarvis_root}")
+    return()
+endif()
+file(GET_RUNTIME_DEPENDENCIES
+    LIBRARIES ${jarvis_plugins}
+    RESOLVED_DEPENDENCIES_VAR jarvis_resolved
+    UNRESOLVED_DEPENDENCIES_VAR jarvis_unresolved
+    PRE_EXCLUDE_REGEXES @JARVIS_LINUX_SYSTEM_LIBS@
+    POST_EXCLUDE_REGEXES "^/lib/ld-linux" "^/usr/lib/ld-linux"
+)
+if(jarvis_resolved)
+    file(INSTALL
+        DESTINATION "${jarvis_dest}"
+        TYPE SHARED_LIBRARY
+        FOLLOW_SYMLINK_CHAIN
+        FILES ${jarvis_resolved}
+    )
+endif()

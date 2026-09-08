@@ -19,6 +19,20 @@
 #include <windows.h>
 #endif
 
+#ifdef __linux__
+#include <boost/dll/runtime_symbol_info.hpp>
+#endif
+
+#ifdef __linux__
+static void jarvis_confine_plugin_paths() {
+    std::string dir = boost::dll::program_location().parent_path().string();
+    setenv("OPENSSL_MODULES", (dir + "/ossl-modules").c_str(), 0);
+    setenv("OPENSSL_ENGINES", (dir + "/engines-3").c_str(), 0);
+    setenv("GIO_MODULE_DIR", (dir + "/gio-modules").c_str(), 0);
+    setenv("SASL_PATH", (dir + "/sasl2").c_str(), 0);
+}
+#endif
+
 static std::filesystem::path jarvis_log_path() {
     std::error_code ec;
     return std::filesystem::temp_directory_path(ec) / "ultijarvis.log";
@@ -77,6 +91,9 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS *info) {
 
 int main(int argc, char *argv[]) {
     std::set_terminate(on_terminate);
+#ifdef __linux__
+    jarvis_confine_plugin_paths();
+#endif
 #ifdef _WIN32
     SetUnhandledExceptionFilter(crash_filter);
 #endif

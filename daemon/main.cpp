@@ -83,6 +83,16 @@ static std::filesystem::path exe_dir() {
         boost::dll::program_location().parent_path().string());
 }
 
+#ifdef __linux__
+static void jarvis_confine_plugin_paths() {
+    std::string dir = boost::dll::program_location().parent_path().string();
+    setenv("OPENSSL_MODULES", (dir + "/ossl-modules").c_str(), 0);
+    setenv("OPENSSL_ENGINES", (dir + "/engines-3").c_str(), 0);
+    setenv("GIO_MODULE_DIR", (dir + "/gio-modules").c_str(), 0);
+    setenv("SASL_PATH", (dir + "/sasl2").c_str(), 0);
+}
+#endif
+
 static void on_terminate() {
     try {
         std::exception_ptr e = std::current_exception();
@@ -275,6 +285,9 @@ static bool open_capture(ma_context *context, ma_device *device,
 }
 
 int main() {
+#ifdef __linux__
+    jarvis_confine_plugin_paths();
+#endif
     detach_from_terminal();
     install_crash_handlers();
     jlog("=== daemon start, exe=" + exe_dir().string() + " ===");

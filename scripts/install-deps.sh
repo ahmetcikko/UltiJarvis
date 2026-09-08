@@ -84,7 +84,8 @@ if command -v apt-get >/dev/null 2>&1; then
         build-essential cmake ninja-build pkg-config git meson \
         qt6-base-dev qt6-declarative-dev qt6-tools-dev qt6-tools-dev-tools \
         libboost-filesystem-dev \
-        libvulkan-dev glslc spirv-headers
+        libvulkan-dev glslc spirv-headers \
+        rpm
 
     PICK_QUERY="apt-cache show"
     apm=$(pick libwebrtc-audio-processing-1-dev libwebrtc-audio-processing-dev) || apm=
@@ -108,7 +109,8 @@ if command -v dnf >/dev/null 2>&1; then
         gcc-c++ cmake ninja-build pkgconf-pkg-config git meson \
         qt6-qtbase-devel qt6-qtdeclarative-devel qt6-qttools-devel \
         boost-devel \
-        vulkan-loader-devel glslc spirv-headers-devel
+        vulkan-loader-devel glslc spirv-headers-devel \
+        rpm-build dpkg
     PICK_QUERY="dnf info"
     apm=$(pick webrtc-audio-processing-1-devel webrtc-audio-processing-devel) || apm=
     if [ -n "$apm" ]; then

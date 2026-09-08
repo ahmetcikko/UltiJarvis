@@ -14,12 +14,19 @@ set(CMAKE_AUTOMOC ON)
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release)
 endif()
+if(LINUX)
+    add_compile_options(
+        "-ffile-prefix-map=${CMAKE_SOURCE_DIR}=."
+        "-ffile-prefix-map=${CMAKE_BINARY_DIR}=.")
+endif()
 
 if(APPLE)
     set(JARVIS_BUNDLE_NAME "Ulti Jarvis.app")
     set(JARVIS_INSTALL_DIR "${JARVIS_BUNDLE_NAME}/Contents/MacOS")
 
     set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME "UltiJarvis")
+elseif(LINUX)
+    set(JARVIS_INSTALL_DIR "lib/ultijarvis")
 else()
     set(JARVIS_INSTALL_DIR ".")
 endif()
@@ -217,6 +224,23 @@ set_target_properties(JarvisSettings PROPERTIES
     MACOSX_BUNDLE OFF
     WIN32_EXECUTABLE ON
 )
+if(LINUX)
+    set(JARVIS_LINUX_SYSTEM_LIBS
+        "^ld-linux.*" "^libc[.]so.*" "^libm[.]so.*" "^libdl[.]so.*"
+        "^librt[.]so.*" "^libpthread[.]so.*" "^libresolv[.]so.*"
+        "^libgcc_s[.]so.*" "^libstdc[+][+][.]so.*"
+        "^libEGL[.]so.*" "^libGL[.]so.*" "^libGLX[.]so.*"
+        "^libGLdispatch[.]so.*" "^libGLESv2[.]so.*" "^libOpenGL[.]so.*"
+        "^libvulkan[.]so.*" "^libdrm[.]so.*" "^libgbm[.]so.*"
+        "^libX11.*" "^libxcb[.]so.*" "^libXau[.]so.*" "^libXdmcp[.]so.*"
+        "^libXext[.]so.*" "^libXrender[.]so.*" "^libxkbcommon[.]so.*"
+        "^libwayland.*" "^libselinux[.]so.*" "^libsystemd[.]so.*"
+        "^libudev[.]so.*" "^libdbus-1[.]so.*"
+    )
+    foreach(jarvis_target IN ITEMS UltiJarvis JarvisDaemon JarvisSettings)
+        target_link_options(${jarvis_target} PRIVATE "LINKER:--disable-new-dtags")
+    endforeach()
+endif()
 target_include_directories(UltiJarvis PRIVATE
     ${CMAKE_SOURCE_DIR}/lib/whisper/include
     ${CMAKE_SOURCE_DIR}/lib/miniaudio
@@ -306,6 +330,16 @@ if(WIN32)
         PRE_EXCLUDE_REGEXES "api-ms-win-" "ext-ms-"
         POST_EXCLUDE_REGEXES ".*[Ss]ystem32.*"
         DIRECTORIES ${JARVIS_RUNTIME_DIR}
+        DESTINATION ${JARVIS_INSTALL_DIR}
+    )
+elseif(LINUX)
+    install(TARGETS UltiJarvis JarvisDaemon JarvisSettings
+        RUNTIME_DEPENDENCY_SET jarvis_runtime
+        RUNTIME DESTINATION ${JARVIS_INSTALL_DIR}
+    )
+    install(RUNTIME_DEPENDENCY_SET jarvis_runtime
+        PRE_EXCLUDE_REGEXES ${JARVIS_LINUX_SYSTEM_LIBS}
+        POST_EXCLUDE_REGEXES "^/lib/ld-linux" "^/usr/lib/ld-linux"
         DESTINATION ${JARVIS_INSTALL_DIR}
     )
 else()
@@ -429,6 +463,8 @@ endif()
 
 if(WIN32 OR APPLE)
     set(JARVIS_DEPLOY_QT_DEFAULT ON)
+elseif(LINUX)
+    set(JARVIS_DEPLOY_QT_DEFAULT ON)
 else()
     set(JARVIS_DEPLOY_QT_DEFAULT OFF)
 endif()
@@ -482,6 +518,55 @@ if(WIN32 AND JARVIS_DEPLOY_QT AND COMMAND qt_generate_deploy_app_script)
             endif()
         ")
     endif()
+endif()
+
+if(LINUX AND JARVIS_DEPLOY_QT)
+    get_target_property(JARVIS_QMAKE Qt6::qmake IMPORTED_LOCATION)
+    execute_process(COMMAND ${JARVIS_QMAKE} -query QT_INSTALL_PLUGINS
+        OUTPUT_VARIABLE JARVIS_QT_PLUGIN_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND ${JARVIS_QMAKE} -query QT_INSTALL_QML
+        OUTPUT_VARIABLE JARVIS_QT_QML_DIR OUTPUT_STRIP_TRAILING_WHITESPACE)
+    foreach(jarvis_platform_plugin IN ITEMS libqxcb libqoffscreen libqminimal
+            libqwayland-generic libqwayland-egl)
+        if(EXISTS "${JARVIS_QT_PLUGIN_DIR}/platforms/${jarvis_platform_plugin}.so")
+            install(FILES
+                "${JARVIS_QT_PLUGIN_DIR}/platforms/${jarvis_platform_plugin}.so"
+                DESTINATION "${JARVIS_INSTALL_DIR}/plugins/platforms")
+        endif()
+    endforeach()
+    foreach(jarvis_plugin_dir IN ITEMS xcbglintegrations imageformats
+            iconengines tls networkinformation wayland-shell-integration
+            wayland-decoration-client wayland-graphics-integration-client)
+        if(EXISTS "${JARVIS_QT_PLUGIN_DIR}/${jarvis_plugin_dir}")
+            install(DIRECTORY "${JARVIS_QT_PLUGIN_DIR}/${jarvis_plugin_dir}"
+                DESTINATION "${JARVIS_INSTALL_DIR}/plugins"
+                FILES_MATCHING PATTERN "*.so")
+        endif()
+    endforeach()
+    foreach(jarvis_qml_dir IN ITEMS QtCore QtQml QtQuick)
+        if(EXISTS "${JARVIS_QT_QML_DIR}/${jarvis_qml_dir}")
+            install(DIRECTORY "${JARVIS_QT_QML_DIR}/${jarvis_qml_dir}"
+                DESTINATION "${JARVIS_INSTALL_DIR}/qml"
+                PATTERN "Pdf" EXCLUDE
+                PATTERN "Scene2D" EXCLUDE
+                PATTERN "Scene3D" EXCLUDE
+                PATTERN "VirtualKeyboard" EXCLUDE
+                PATTERN "Particles" EXCLUDE
+                PATTERN "tooling" EXCLUDE)
+        endif()
+    endforeach()
+    file(WRITE ${CMAKE_BINARY_DIR}/packaging/qt.conf
+"[Paths]
+Prefix = .
+Plugins = plugins
+Imports = qml
+Qml2Imports = qml
+")
+    install(FILES ${CMAKE_BINARY_DIR}/packaging/qt.conf
+        DESTINATION ${JARVIS_INSTALL_DIR})
+    configure_file(${CMAKE_SOURCE_DIR}/cmake/linux_plugin_deps.cmake.in
+        ${CMAKE_BINARY_DIR}/linux_plugin_deps.cmake @ONLY)
+    install(SCRIPT ${CMAKE_BINARY_DIR}/linux_plugin_deps.cmake)
 endif()
 
 if(APPLE AND JARVIS_DEPLOY_QT)
@@ -640,12 +725,163 @@ exit 0
         "${CMAKE_BINARY_DIR}/packaging/postinst")
     set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
     set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Ahmet <ahmetcikko@gmail.com>")
-    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS
-        "procps, polkitd, xdg-utils, pulseaudio-utils, systemd, libqt6svg6")
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS OFF)
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "procps, polkitd, xdg-utils, pulseaudio-utils, systemd, libc6, libstdc++6, libgcc-s1, libgl1, libegl1, libglx0, libopengl0, libx11-6, libx11-xcb1, libxcb1, libxkbcommon0, libdbus-1-3, libselinux1, libwayland-client0, libwayland-cursor0, libwayland-egl1")
     set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "libvulkan1")
-    set(CPACK_PACKAGING_INSTALL_PREFIX "/usr/lib/ultijarvis")
+    set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 endif()
+if(LINUX)
+    find_program(JARVIS_RPMBUILD rpmbuild)
+    if(JARVIS_RPMBUILD)
+        list(APPEND CPACK_GENERATOR "RPM")
+    else()
+        message(STATUS "rpmbuild not found - RPM generator disabled")
+    endif()
+    file(WRITE ${CMAKE_BINARY_DIR}/packaging/rpm_post
+[=[#!/bin/sh
+for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
+    uid=$(id -u "$u" 2>/dev/null) || continue
+    runuser -u "$u" -- env XDG_RUNTIME_DIR=/run/user/$uid \
+        DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
+        /usr/lib/ultijarvis/Ulti-Jarvis-Settings >/dev/null 2>&1 &
+done
+exit 0
+]=])
+    file(CHMOD ${CMAKE_BINARY_DIR}/packaging/rpm_post
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ
+                    GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+    set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE
+        ${CMAKE_BINARY_DIR}/packaging/rpm_post)
+    set(CPACK_RPM_PACKAGE_AUTOREQ OFF)
+    set(CPACK_RPM_PACKAGE_AUTOPROV OFF)
+    set(CPACK_RPM_PACKAGE_NAME "ultijarvis")
+    set(CPACK_RPM_PACKAGE_LICENSE "GPL-3.0-only")
+    set(CPACK_RPM_PACKAGE_GROUP "Applications/Multimedia")
+    set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
+    set(CPACK_RPM_PACKAGE_REQUIRES "procps-ng, polkit, xdg-utils, pulseaudio-utils, systemd, glibc, libstdc++, libgcc, mesa-libGL, mesa-libEGL, libglvnd-glx, libglvnd-opengl, libX11, libX11-xcb, libxcb, libxkbcommon, dbus-libs, libselinux, libwayland-client, libwayland-cursor, libwayland-egl")
+    set(CPACK_RPM_SPEC_MORE_DEFINE
+        "%global __os_install_post %{nil}
+%global _build_id_links none
+%global __requires_exclude_from ^/usr/lib/ultijarvis/.*$
+%global __provides_exclude_from ^/usr/lib/ultijarvis/.*$")
+    set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION
+        "/usr/lib;/usr/share;/usr/share/applications;/usr/share/icons;/usr/share/icons/hicolor;/usr/share/icons/hicolor/scalable;/usr/share/icons/hicolor/scalable/apps")
+    file(WRITE ${CMAKE_BINARY_DIR}/packaging/ultijarvis.desktop
+"[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Ulti Jarvis
+GenericName=Voice Assistant
+Comment=Voice assistant that listens for a wake word and runs desktop commands
+Exec=/usr/lib/ultijarvis/Ulti-Jarvis-Settings
+Icon=ultijarvis
+Terminal=false
+StartupNotify=true
+Categories=Utility;AudioVideo;
+Keywords=voice;assistant;speech;jarvis;
+")
+    install(FILES ${CMAKE_BINARY_DIR}/packaging/ultijarvis.desktop
+        DESTINATION share/applications)
+    install(FILES ${CMAKE_SOURCE_DIR}/images/ultijarvis.svg
+        DESTINATION share/icons/hicolor/scalable/apps)
+    install(FILES ${CMAKE_SOURCE_DIR}/LICENSE
+        DESTINATION share/doc/ultijarvis
+        RENAME copyright)
+    find_program(JARVIS_READELF readelf)
+    if(JARVIS_READELF)
+        configure_file(${CMAKE_SOURCE_DIR}/cmake/linux_rpaths.cmake.in
+            ${CMAKE_BINARY_DIR}/linux_rpaths.cmake @ONLY)
+        install(SCRIPT ${CMAKE_BINARY_DIR}/linux_rpaths.cmake)
+    else()
+        message(WARNING
+            "readelf was not found; bundled libraries will keep whatever "
+            "absolute search paths the distribution built them with")
+    endif()
+    file(WRITE ${CMAKE_BINARY_DIR}/packaging/postrm
+[=[#!/bin/sh
+
+case "$1" in
+    remove|purge|abort-install|abort-upgrade|disappear) ;;
+    *) exit 0 ;;
+esac
+
+for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
+    uid=$(id -u "$u" 2>/dev/null) || continue
+    runuser -u "$u" -- env XDG_RUNTIME_DIR=/run/user/$uid \
+        DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
+        systemctl --user disable --now ultijarvis-daemon.service \
+        >/dev/null 2>&1 || true
+done
+
+pkill -f '/usr/lib/ultijarvis/Ulti Jarvis' >/dev/null 2>&1 || true
+rm -f /tmp/ultijarvis.pid /tmp/ultijarvis.lock /tmp/ultijarvis.log
+
+if [ "$1" != "purge" ]; then
+    exit 0
+fi
+
+getent passwd | while IFS=: read -r name pw uid gid gecos home shell; do
+    [ "$uid" -ge 1000 ] 2>/dev/null || continue
+    [ "$uid" -lt 65534 ] 2>/dev/null || continue
+    [ -d "$home" ] || continue
+    rm -rf "$home/.config/systemd/user/ultijarvis-daemon.service" \
+        "$home/.config/autostart/ultijarvis-daemon.desktop" \
+        "$home/.config/ultijarvis" \
+        "$home/.cache/Ulti Jarvis" \
+        "$home/.cache/Ulti-Jarvis-Settings" \
+        "$home/.cache/Ulti-Jarvis-Daemon" \
+        "$home/.local/share/ultijarvis" \
+        "$home/.local/state/ultijarvis" || true
+    loginctl disable-linger "$name" >/dev/null 2>&1 || true
+done
+
+exit 0
+]=])
+    file(CHMOD ${CMAKE_BINARY_DIR}/packaging/postrm
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ
+                    GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+    list(APPEND CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA
+        "${CMAKE_BINARY_DIR}/packaging/postrm")
+    file(WRITE ${CMAKE_BINARY_DIR}/packaging/rpm_postun
+[=[#!/bin/sh
+
+[ "$1" = "0" ] || exit 0
+
+for u in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $2}'); do
+    uid=$(id -u "$u" 2>/dev/null) || continue
+    runuser -u "$u" -- env XDG_RUNTIME_DIR=/run/user/$uid \
+        DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus \
+        systemctl --user disable --now ultijarvis-daemon.service \
+        >/dev/null 2>&1 || true
+done
+
+pkill -f '/usr/lib/ultijarvis/Ulti Jarvis' >/dev/null 2>&1 || true
+rm -f /tmp/ultijarvis.pid /tmp/ultijarvis.lock /tmp/ultijarvis.log
+
+getent passwd | while IFS=: read -r name pw uid gid gecos home shell; do
+    [ "$uid" -ge 1000 ] 2>/dev/null || continue
+    [ "$uid" -lt 65534 ] 2>/dev/null || continue
+    [ -d "$home" ] || continue
+    rm -rf "$home/.config/systemd/user/ultijarvis-daemon.service" \
+        "$home/.config/autostart/ultijarvis-daemon.desktop" \
+        "$home/.config/ultijarvis" \
+        "$home/.cache/Ulti Jarvis" \
+        "$home/.cache/Ulti-Jarvis-Settings" \
+        "$home/.cache/Ulti-Jarvis-Daemon" \
+        "$home/.local/share/ultijarvis" \
+        "$home/.local/state/ultijarvis" || true
+    loginctl disable-linger "$name" >/dev/null 2>&1 || true
+done
+
+exit 0
+]=])
+    file(CHMOD ${CMAKE_BINARY_DIR}/packaging/rpm_postun
+        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ
+                    GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
+    set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE
+        ${CMAKE_BINARY_DIR}/packaging/rpm_postun)
+endif()
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
 set(CPACK_PACKAGE_NAME "UltiJarvis")
 set(CPACK_PACKAGE_VENDOR "Ahmet")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})

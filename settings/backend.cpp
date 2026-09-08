@@ -459,6 +459,44 @@ static std::filesystem::path darwin_cache_dir() {
 }
 #endif
 
+#ifdef __linux__
+
+static void linux_remove_matching(const std::filesystem::path &dir,
+                                  const std::string &prefix) {
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec))
+        return;
+    for (const std::filesystem::directory_entry &entry :
+         std::filesystem::directory_iterator(dir, ec)) {
+        std::string name = entry.path().filename().string();
+        if (name.rfind(prefix, 0) == 0)
+            std::filesystem::remove_all(entry.path(), ec);
+    }
+}
+
+static std::filesystem::path linux_xdg_dir(const char *var,
+                                           const char *fallback) {
+    const char *xdg = getenv(var);
+    if (xdg && *xdg)
+        return std::filesystem::path(xdg);
+    const char *home = getenv("HOME");
+    return std::filesystem::path(home ? home : "") / fallback;
+}
+
+static void linux_purge_user_data() {
+    for (const std::filesystem::path &base :
+         {linux_xdg_dir("XDG_CACHE_HOME", ".cache"),
+          linux_xdg_dir("XDG_CONFIG_HOME", ".config"),
+          linux_xdg_dir("XDG_DATA_HOME", ".local/share"),
+          linux_xdg_dir("XDG_STATE_HOME", ".local/state")}) {
+        linux_remove_matching(base, "Ulti Jarvis");
+        linux_remove_matching(base, "Ulti-Jarvis");
+        linux_remove_matching(base, "ultijarvis");
+    }
+}
+
+#endif
+
 static void stop_daemon() {
     int pid = daemon_pid();
     if (pid <= 0)
@@ -579,6 +617,14 @@ void Settings::uninstall() {
                  bundle.string());
     }
 #else
+#ifdef __linux__
+
+    run_tool("pkill", {"-f", (dir / "Ulti Jarvis").string()});
+    linux_purge_user_data();
+    const char *linger_user = getenv("USER");
+    if (linger_user && *linger_user)
+        run_tool("loginctl", {"disable-linger", linger_user});
+#endif
     bool packaged = false;
     try {
         boost::filesystem::path pk = bp::search_path("pkexec");
@@ -586,9 +632,31 @@ void Settings::uninstall() {
         if (!pk.empty() && d.rfind("/usr/", 0) == 0) {
             std::vector<std::string> args = {"apt-get", "purge", "-y",
                                              "ultijarvis"};
+#ifdef __linux__
+            if (bp::search_path("apt-get").empty() &&
+                !bp::search_path("dnf").empty())
+                args = {"dnf", "remove", "-y", "ultijarvis"};
+#endif
             bp::child c(pk, args);
+#ifdef __linux__
+
+            c.wait();
+            int rc = c.exit_code();
+            packaged = rc == 0;
+
+            if (!packaged && rc != 126 && rc != 127) {
+                jlog("package removal exited with " + std::to_string(rc) +
+                     ", removing the files directly");
+                run_tool("pkexec", {"rm", "-rf", d});
+                std::error_code left;
+                packaged = !std::filesystem::exists(dir, left);
+            }
+            if (!packaged)
+                jlog("the application could not be removed from " + d);
+#else
             c.detach();
             packaged = true;
+#endif
         }
     } catch (...) {
     }

@@ -25,6 +25,8 @@ Ulti Jarvis Settings - A GUI settings app that allows you to change your microph
 
 The app is supported on macOS, Windows 11 and Linux based OS's.
 
+You will need to run the script in the **scripts** folder to get the needed dependencies before compilation.
+
 **WARNING**: Since adding an api key to a binary or posting it on github is dangerous, you will need to create your own API key at the Groq website.
 
 This app is strictly for **personal use** and it is fully free.
