@@ -33,6 +33,12 @@
 #include <unistd.h>
 #endif
 
+#ifdef __linux__
+#include <iterator>
+#include <sys/stat.h>
+#include <sys/types.h>
+#endif
+
 #if BOOST_VERSION >= 108600
 namespace bp = boost::process::v1;
 #else
@@ -144,6 +150,62 @@ static std::filesystem::path lock_path() {
     return std::filesystem::temp_directory_path(ec) / "ultijarvis.lock";
 }
 
+#ifdef __linux__
+
+static void adopt_session_environment() {
+    static const char *wanted[] = {
+        "DISPLAY",          "WAYLAND_DISPLAY",   "XAUTHORITY",
+        "XDG_RUNTIME_DIR",  "XDG_SESSION_TYPE",  "XDG_CURRENT_DESKTOP",
+        "DBUS_SESSION_BUS_ADDRESS"};
+    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) {
+        uid_t self = getuid();
+        std::error_code ec;
+        for (const std::filesystem::directory_entry &entry :
+             std::filesystem::directory_iterator("/proc", ec)) {
+            std::string pid = entry.path().filename().string();
+            if (pid.find_first_not_of("0123456789") != std::string::npos)
+                continue;
+            struct stat st;
+            if (stat(entry.path().c_str(), &st) != 0 || st.st_uid != self)
+                continue;
+            std::ifstream f(entry.path() / "environ", std::ios::binary);
+            if (!f.is_open())
+                continue;
+            std::string blob((std::istreambuf_iterator<char>(f)),
+                             std::istreambuf_iterator<char>());
+            if (blob.find("DISPLAY=") == std::string::npos)
+                continue;
+            bool adopted = false;
+            for (std::size_t i = 0; i < blob.size();) {
+                std::size_t end = blob.find('\0', i);
+                if (end == std::string::npos)
+                    end = blob.size();
+                std::string pair = blob.substr(i, end - i);
+                i = end + 1;
+                std::size_t eq = pair.find('=');
+                if (eq == std::string::npos)
+                    continue;
+                std::string key = pair.substr(0, eq);
+                for (const char *name : wanted)
+                    if (key == name) {
+                        setenv(name, pair.c_str() + eq + 1, 1);
+                        adopted = true;
+                    }
+            }
+            if (adopted) {
+                jlog("took the desktop session environment from pid " + pid);
+                break;
+            }
+        }
+    }
+    if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY"))
+        jlog("no desktop session was found, the window will not be able to open");
+    else if (!getenv("DISPLAY"))
+        setenv("QT_QPA_PLATFORM", "wayland", 1);
+}
+
+#endif
+
 void wakeword_callback(CLFML::LOWWI::Lowwi_ctx_t, std::shared_ptr<void>) {
     jlog("wake word detected");
     if (g_running.exchange(true)) {
@@ -152,6 +214,9 @@ void wakeword_callback(CLFML::LOWWI::Lowwi_ctx_t, std::shared_ptr<void>) {
     }
     std::thread([]() {
         try {
+#ifdef __linux__
+            adopt_session_environment();
+#endif
             jlog("launching " + app_path().string());
             bp::child c(boost::filesystem::path(app_path().string()));
             c.wait();

@@ -313,6 +313,13 @@ static void probe_runtime() {}
 void jarvis_repair_install() { restore_missing_files(true); }
 
 static void start_daemon() {
+#ifdef __linux__
+
+    if (!bp::search_path("systemctl").empty()) {
+        run_tool("systemctl", {"--user", "start", "ultijarvis-daemon.service"});
+        return;
+    }
+#endif
     std::filesystem::path exe = daemon_path();
     std::error_code ec;
     if (!std::filesystem::exists(exe, ec)) {
