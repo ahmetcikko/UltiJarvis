@@ -36,4 +36,6 @@ You will need to run the script in the **scripts** folder to get the needed depe
 
 **WARNING**: Since adding an api key to a binary or posting it on github is dangerous, you will need to create your own API key at the Groq website and paste it into the app, the app has instructions.
 
+**WARNING**: All package types have been tested except for **rpm**, so if you encounter any bugs then contact via ahmetcikko@gmail.com.
+
 This app is strictly for **personal use** and it is fully free.
