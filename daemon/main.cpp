@@ -286,7 +286,8 @@ static void on_hup(int) { g_reload = 1; }
 static void detach_from_terminal() {
 #ifndef _WIN32
 #if defined(NDEBUG) && !defined(__APPLE__)
-
+    // IMPORTANT: DAEMON WONT WORK CONTINUOUSLY IN DEBUG MODE,
+    // SET CMAKE TO RELEASE BEFORE BUILDING
     if (fork() > 0)
         _exit(0);
     setsid();
