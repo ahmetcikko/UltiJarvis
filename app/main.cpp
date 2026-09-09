@@ -19,6 +19,10 @@
 #include <windows.h>
 #endif
 
+#ifdef _WIN32
+#include <QIcon>
+#endif
+
 #ifdef __linux__
 #include <boost/dll/runtime_symbol_info.hpp>
 #endif
@@ -100,6 +104,9 @@ int main(int argc, char *argv[]) {
     jlog("=== app start ===");
     QGuiApplication app(argc, argv);
     jlog("qt application created");
+#ifdef _WIN32
+    app.setWindowIcon(QIcon(QStringLiteral(":/images/ultijarvis.svg")));
+#endif
     bool opengl = false;
     {
         QOpenGLContext probe;

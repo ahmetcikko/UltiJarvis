@@ -74,7 +74,7 @@ static void jlog(const std::string &msg) {
         return;
     std::time_t t = std::time(nullptr);
     char stamp[32] = {0};
-    std::tm tm {};
+    std::tm tm{};
 #ifdef _WIN32
     localtime_s(&tm, &t);
 #else
@@ -116,10 +116,10 @@ static void on_terminate() {
 #ifdef _WIN32
 static LONG WINAPI crash_filter(EXCEPTION_POINTERS *info) {
     char buf[160];
-    std::snprintf(buf, sizeof(buf), "FATAL: exception 0x%08lX at %p",
-                  static_cast<unsigned long>(
-                      info->ExceptionRecord->ExceptionCode),
-                  info->ExceptionRecord->ExceptionAddress);
+    std::snprintf(
+        buf, sizeof(buf), "FATAL: exception 0x%08lX at %p",
+        static_cast<unsigned long>(info->ExceptionRecord->ExceptionCode),
+        info->ExceptionRecord->ExceptionAddress);
     jlog(buf);
     return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -153,10 +153,13 @@ static std::filesystem::path lock_path() {
 #ifdef __linux__
 
 static void adopt_session_environment() {
-    static const char *wanted[] = {
-        "DISPLAY",          "WAYLAND_DISPLAY",   "XAUTHORITY",
-        "XDG_RUNTIME_DIR",  "XDG_SESSION_TYPE",  "XDG_CURRENT_DESKTOP",
-        "DBUS_SESSION_BUS_ADDRESS"};
+    static const char *wanted[] = {"DISPLAY",
+                                   "WAYLAND_DISPLAY",
+                                   "XAUTHORITY",
+                                   "XDG_RUNTIME_DIR",
+                                   "XDG_SESSION_TYPE",
+                                   "XDG_CURRENT_DESKTOP",
+                                   "DBUS_SESSION_BUS_ADDRESS"};
     if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY")) {
         uid_t self = getuid();
         std::error_code ec;
@@ -199,7 +202,8 @@ static void adopt_session_environment() {
         }
     }
     if (!getenv("DISPLAY") && !getenv("WAYLAND_DISPLAY"))
-        jlog("no desktop session was found, the window will not be able to open");
+        jlog("no desktop session was found, the window will not be able to "
+             "open");
     else if (!getenv("DISPLAY"))
         setenv("QT_QPA_PLATFORM", "wayland", 1);
 }
@@ -310,8 +314,8 @@ static bool open_capture(ma_context *context, ma_device *device,
     std::string report = "capture devices: " + std::to_string(captureCount) +
                          " (get_devices=" + std::to_string(int(gd)) + ")";
     for (ma_uint32 i = 0; i < captureCount; i++)
-        report += "\n    device " + std::to_string(i) + ": " +
-                  captureInfos[i].name;
+        report +=
+            "\n    device " + std::to_string(i) + ": " + captureInfos[i].name;
     *config = ma_device_config_init(ma_device_type_capture);
     (*config).capture.format = ma_format_f32;
     (*config).capture.channels = 1;
@@ -397,11 +401,11 @@ int main() {
 #ifdef _WIN32
     const OrtApiBase *ort = OrtGetApiBase();
     if (!ort || !ort->GetApi(ORT_API_VERSION)) {
-        jlog(std::string("onnxruntime unusable: this build needs API ") +
-             std::to_string(ORT_API_VERSION) +
-             (ort ? std::string(", loaded library is ") +
-                        ort->GetVersionString()
-                  : std::string(", no library resolved")));
+        jlog(
+            std::string("onnxruntime unusable: this build needs API ") +
+            std::to_string(ORT_API_VERSION) +
+            (ort ? std::string(", loaded library is ") + ort->GetVersionString()
+                 : std::string(", no library resolved")));
         return 1;
     }
     jlog(std::string("onnxruntime ready, version ") + ort->GetVersionString());
@@ -444,8 +448,8 @@ int main() {
     ma_device_id matched_id;
     ma_device device;
     ma_device_config config;
-    bool open = open_capture(&context, &device, &config, &matched_id,
-                             &ww_runtime);
+    bool open =
+        open_capture(&context, &device, &config, &matched_id, &ww_runtime);
     if (!open)
         jlog("capture unavailable, will keep retrying");
 
@@ -459,8 +463,8 @@ int main() {
             ma_device_uninit(&device);
             open = false;
         }
-        open = open_capture(&context, &device, &config, &matched_id,
-                            &ww_runtime);
+        open =
+            open_capture(&context, &device, &config, &matched_id, &ww_runtime);
         if (open)
             jlog("capture running");
     }

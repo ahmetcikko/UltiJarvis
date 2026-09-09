@@ -186,6 +186,23 @@ qt_add_resources(UltiJarvis "assets"
         fonts/Inter_18pt-Black.ttf
         fonts/PlusJakartaSans-Bold.ttf
 )
+if(WIN32)
+    enable_language(RC)
+    qt_add_resources(UltiJarvis "windows_icon"
+        PREFIX "/"
+        FILES
+            images/ultijarvis.svg
+    )
+    target_sources(UltiJarvis PRIVATE
+        ${CMAKE_SOURCE_DIR}/images/windows_icon.rc)
+    qt_add_resources(JarvisSettings "windows_icon_settings"
+        PREFIX "/"
+        FILES
+            images/ultijarvis.svg
+    )
+    target_sources(JarvisSettings PRIVATE
+        ${CMAKE_SOURCE_DIR}/images/windows_icon.rc)
+endif()
 qt_add_resources(JarvisSettings "settings_assets"
     PREFIX "/"
     BASE settings

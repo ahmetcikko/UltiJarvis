@@ -9,6 +9,10 @@
 #include <QQmlContext>
 #include <QUrl>
 
+#ifdef _WIN32
+#include <QIcon>
+#endif
+
 #ifdef __linux__
 static void jarvis_confine_plugin_paths() {
     std::string dir = boost::dll::program_location().parent_path().string();
@@ -28,6 +32,9 @@ int main(int argc, char *argv[]) {
         return 0;
     }
     QGuiApplication app(argc, argv);
+#ifdef _WIN32
+    app.setWindowIcon(QIcon(QStringLiteral(":/images/ultijarvis.svg")));
+#endif
     Settings settings;
     QQmlApplicationEngine engine;
     (*engine.rootContext()).setContextProperty("settings", &settings);
